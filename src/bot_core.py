@@ -7,7 +7,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
-from src.weflow_client import WeFlowMessage
+from src.wechat_client import WeChatMessage
 from src.config_loader import AppConfig
 
 logger = logging.getLogger(__name__)
@@ -36,9 +36,9 @@ class BotCore:
     3. 多群会话隔离 — 每个群独立维护对话历史
     """
 
-    def __init__(self, config: AppConfig, weflow_client):
+    def __init__(self, config: AppConfig, wechat_client):
         self.config = config
-        self.client = weflow_client
+        self.client = wechat_client
         self.bot_name = config.bot.name
         self.cooldown = config.bot.reply_cooldown_seconds
         # 群会话: {group_id: GroupSession}
@@ -47,7 +47,7 @@ class BotCore:
     # ----------------------------------------------------------------
     # 入口：处理一条消息，返回要不要回复 + 回复内容
     # ----------------------------------------------------------------
-    def handle(self, msg: WeFlowMessage) -> Optional[Tuple[str, str]]:
+    def handle(self, msg: WeChatMessage) -> Optional[Tuple[str, str]]:
         """
         处理消息。返回 (reply_text, roomid) 或 None。
         None 表示无需回复。
@@ -104,13 +104,13 @@ class BotCore:
     # ----------------------------------------------------------------
     # 内部方法
     # ----------------------------------------------------------------
-    def _is_at_bot(self, msg: WeFlowMessage) -> bool:
-        """判断消息是否 @了机器人（WeFlow 基于内容检测）。"""
+    def _is_at_bot(self, msg: WeChatMessage) -> bool:
+        """判断消息是否 @了机器人（基于内容检测）。"""
         if self.bot_name in msg.content:
             return True
         return False
 
-    def _clean_at_text(self, msg: WeFlowMessage) -> str:
+    def _clean_at_text(self, msg: WeChatMessage) -> str:
         """去掉 @bot 部分，返回干净的用户问题。"""
         text = msg.content.strip()
         import re
