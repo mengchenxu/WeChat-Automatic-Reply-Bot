@@ -26,3 +26,4 @@ Desktop.ini
 # WCF 运行时
 *.dll
 WeChatFerry/
+weflow*
