@@ -51,6 +51,26 @@ class WeFlowClient:
     def set_bot_identity(self, nicknames: list, wxid: str = ""):
         self.bot_nicknames = nicknames
         self.bot_wxid = wxid
+        self._build_name_cache()
+
+    def _build_name_cache(self):
+        """从联系人 API 构建 wxid → 显示名 映射。"""
+        self._name_cache = {}
+        try:
+            resp = self._api_get("/api/v1/contacts")
+            if resp and "contacts" in resp:
+                for c in resp["contacts"]:
+                    wxid = c.get("username", "")
+                    # 优先用备注名，其次 displayName，最后 nickname
+                    name = c.get("remark") or c.get("displayName") or c.get("nickname") or wxid
+                    if wxid:
+                        self._name_cache[wxid] = name
+            logger.info("Name cache: %d entries", len(self._name_cache))
+        except Exception:
+            pass
+
+    def get_display_name(self, wxid: str) -> str:
+        return self._name_cache.get(wxid, wxid)
 
     def is_at_bot(self, msg: WeFlowMessage) -> bool:
         # 只匹配 @鼠鼠 格式，避免普通对话中的"鼠鼠"触发

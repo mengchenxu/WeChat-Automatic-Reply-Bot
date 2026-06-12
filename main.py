@@ -84,10 +84,10 @@ def main():
             reply = llm.chat(list(session.history))
             session.history.append(ChatMessage(role="assistant", content=reply))
             
-            # 用显示名做真实 @
-            display = msg.display_name or msg.sender_name
+            # 用映射后的显示名做真实 @
+            display = client.get_display_name(msg.sender_name)
             client.send_text(reply, roomid, display)
-            logger.info("Reply: %s -> %s", roomid, reply[:50])
+            logger.info("Reply: @%s -> %s", display, reply[:50])
 
     client.on_message(on_msg)
     client.start_receiving()
