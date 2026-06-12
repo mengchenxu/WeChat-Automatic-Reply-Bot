@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 class WeFlowMessage:
     def __init__(self, data: dict, session_type: str = "", session_name: str = ""):
+        import re
         self.content = data.get("content", "") or ""
         self.sender_name = data.get("senderUsername", "") or ""
         self.rawid = str(data.get("localId", "") or data.get("createTime", time.time()))
@@ -16,6 +17,14 @@ class WeFlowMessage:
         self.session_type = session_type
         self.group_name = session_name
         self.raw = data
+        # 提取所有 @mention（用于 LLM 上下文）
+        self.mentions = re.findall(r'@(\S+)', self.content or "")
+        # 从 rawContent 提取显示名
+        raw_content = data.get("rawContent", "") or ""
+        if ":" in raw_content and "\n" in raw_content:
+            self.display_name = raw_content.split(":\n")[0]
+        else:
+            self.display_name = self.sender_name
 
     @property
     def is_group(self) -> bool:

@@ -65,12 +65,28 @@ def main():
         if client.is_at_bot(msg):
             roomid = msg.roomid
             history = bot.get_history(roomid)
+            
+            # 添加上下文：来谁发的、还 @了谁
+            context = f"(来自群成员 {msg.display_name} 的消息"
+            if msg.mentions:
+                others = [m for m in msg.mentions if m not in client.bot_nicknames]
+                if others:
+                    context += f"，其中 @了: {', '.join(others)}"
+            context += f")\n{msg.content}"
+            
+            # 注入用户消息（含上下文）
+            from src.bot_core import ChatMessage
+            session = bot._get_session(roomid)
+            session.history.append(ChatMessage(role="user", content=context))
+            session.last_reply_at = time.time()
+            
             logger.info("LLM: room=%s, rounds=%d", roomid, len(history)//2)
-
-            reply = llm.chat(history)
-            bot.add_reply(roomid, reply)
-            # UIA 会真实 @发送者
-            client.send_text(reply, roomid, msg.sender_name)
+            reply = llm.chat(list(session.history))
+            session.history.append(ChatMessage(role="assistant", content=reply))
+            
+            # 用显示名做真实 @
+            display = msg.display_name or msg.sender_name
+            client.send_text(reply, roomid, display)
             logger.info("Reply: %s -> %s", roomid, reply[:50])
 
     client.on_message(on_msg)
