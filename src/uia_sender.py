@@ -219,23 +219,17 @@ class UiaSender:
         return True
 
     def send_text(self, contact: str, text: str) -> bool:
-        """发送文本消息。contact: 群名/联系人名，text: 消息内容。"""
+        """发送文本消息。跳过联系人切换，直接在当前窗口发送。"""
         with self._lock:
             if not self._ready:
-                log.error("UIA 未就绪")
+                log.error("UIA not ready")
                 return False
             if not self._ensure_window():
                 return False
             if "<PIL." in text:
-                log.warning("跳过 PIL 引用消息")
                 return False
 
             self._activate()
-
-            if self.search_enabled and contact:
-                if contact != self._last_contact:
-                    self._switch_contact(contact)
-                    self._last_contact = contact
 
             if not self._locate_input():
                 return False
