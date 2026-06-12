@@ -1,30 +1,20 @@
 """
 WeFlow 接入层 — REST API 轮询版。
-1. 轮询 /api/v1/sessions 检测未读消息
-2. 调用 /api/v1/messages?talker= 获取消息
-3. UIA 自动发送回复
 """
-import json
-import logging
-import threading
-import time
+import json, logging, threading, time, requests
 from typing import Callable, Optional
-
-import requests
 
 logger = logging.getLogger(__name__)
 
 
 class WeFlowMessage:
-    def __init__(self, data: dict):
+    def __init__(self, data: dict, session_type: str = "", session_name: str = ""):
         self.content = data.get("content", "") or ""
-        self.session_id = data.get("talker", "") or ""
-        self.session_type = data.get("sessionType", "") or ""
-        self.group_name = data.get("displayName", "") or ""
-        self.sender_name = data.get("senderName", "") or data.get("talkerName", "") or ""
-        self.sender_id = data.get("senderId", "") or ""
-        self.rawid = data.get("id", "") or str(data.get("timestamp", time.time()))
-        self.timestamp = data.get("timestamp", 0) or 0
+        self.sender_name = data.get("senderUsername", "") or ""
+        self.rawid = str(data.get("localId", "") or data.get("createTime", time.time()))
+        self.session_id = data.get("talker", "") or ""  # will be set by caller
+        self.session_type = session_type
+        self.group_name = session_name
         self.raw = data
 
     @property
@@ -37,7 +27,7 @@ class WeFlowMessage:
 
 
 class WeFlowClient:
-    def __init__(self, base_url: str = "http://127.0.0.1:5031", access_token: str = "", poll_interval: float = 1.0):
+    def __init__(self, base_url: str = "http://127.0.0.1:5031", access_token: str = "", poll_interval: float = 1.5):
         self.base_url = base_url
         self.access_token = access_token
         self.poll_interval = poll_interval
@@ -56,13 +46,10 @@ class WeFlowClient:
                 return True
         return False
 
-    # ----------------------------------------------------------------
-    # 接收 — REST 轮询
-    # ----------------------------------------------------------------
     def start_receiving(self):
         self._running = True
         threading.Thread(target=self._poll_loop, daemon=True, name="weflow-poll").start()
-        logger.info("WeFlow REST 轮询已启动")
+        logger.info("WeFlow REST polling started")
 
     def on_message(self, callback):
         self._callback = callback
@@ -72,92 +59,72 @@ class WeFlowClient:
             try:
                 self._poll()
             except Exception:
-                logger.exception("轮询异常")
+                logger.exception("Poll error")
             time.sleep(self.poll_interval)
 
     def _poll(self):
-        # 1. 获取会话列表
-        sessions = self._get_sessions()
+        sessions = self._api_get("/api/v1/sessions")
         if not sessions:
             return
 
-        # 2. 遍历有消息的群聊
-        for sess in sessions:
+        for sess in sessions.get("sessions", []):
             talker = sess.get("username", "")
             stype = sess.get("sessionType", "")
+            sname = sess.get("displayName", "")
+            unread = sess.get("unreadCount", 0)
 
             if not talker:
                 continue
             if stype != "group" and "@chatroom" not in talker:
                 continue
 
-            # 3. 获取消息
-            msgs = self._get_messages(talker)
-            for m in msgs:
-                msg = WeFlowMessage(m)
+            resp = self._api_get(f"/api/v1/messages?talker={talker}&media=false")
+            if not resp:
+                continue
+
+            for mdata in resp.get("messages", []):
+                msg = WeFlowMessage(mdata, session_type=stype, session_name=sname)
+                msg.session_id = talker
+
                 if not msg.content.strip():
                     continue
-                key = msg.rawid or f"{talker}|{msg.content[:80]}"
+
+                key = msg.rawid
                 if key in self._seen_ids:
                     continue
                 self._seen_ids.add(key)
-                if len(self._seen_ids) > 10000:
-                    self._seen_ids = set(list(self._seen_ids)[-5000:])
+                if len(self._seen_ids) > 5000:
+                    self._seen_ids = set(list(self._seen_ids)[-2500:])
 
                 # 自回过滤
-                skip = False
-                for nick in self.bot_nicknames:
-                    if nick and nick in msg.sender_name:
-                        skip = True
-                        break
-                if skip:
+                if msg.sender_name in self.bot_nicknames:
                     continue
 
-                logger.info("新消息: room=%s, sender=%s, text=%s", talker, msg.sender_name, msg.content[:80])
+                logger.info("Msg: room=%s, sender=%s, text=%s", talker, msg.sender_name, msg.content[:80])
                 if self._callback:
                     self._callback(msg)
 
-    def _get_sessions(self):
+    def _api_get(self, path: str):
         try:
-            url = f"{self.base_url}/api/v1/sessions?access_token={self.access_token}"
-            r = requests.get(url, timeout=5)
-            if r.status_code == 200:
-                data = r.json()
-                return data.get("sessions", [])
-        except Exception:
-            pass
-        return []
-
-    def _get_messages(self, talker: str):
-        try:
-            url = f"{self.base_url}/api/v1/messages?access_token={self.access_token}&talker={talker}&media=false"
+            sep = "&" if "?" in path else "?"
+            url = f"{self.base_url}{path}{sep}access_token={self.access_token}"
             r = requests.get(url, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                msgs = data.get("messages", [])
-                return sorted(msgs, key=lambda x: x.get("timestamp", 0))[-20:]
+            return r.json() if r.status_code == 200 else None
         except Exception:
-            pass
-        return []
+            return None
 
-    # ----------------------------------------------------------------
-    # 发送
-    # ----------------------------------------------------------------
     def send_text(self, text: str, receiver: str, at_sender: str = "") -> bool:
         if self._sender is None:
             try:
                 from src.uia_sender import UiaSender
                 self._sender = UiaSender()
-                logger.info("UIA sender initialized")
+                logger.info("UIA sender ready")
             except Exception:
-                logger.exception("UIA sender init failed")
                 return False
         try:
             return self._sender.send_text(receiver, text)
         except Exception:
-            logger.exception("UIA send failed")
             return False
 
     def stop(self):
         self._running = False
-        logger.info("WeFlow client stopped")

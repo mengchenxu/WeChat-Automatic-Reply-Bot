@@ -36,9 +36,9 @@ class BotCore:
     3. 多群会话隔离 — 每个群独立维护对话历史
     """
 
-    def __init__(self, config: AppConfig, wechat_client):
+    def __init__(self, config: AppConfig, weflow_client):
         self.config = config
-        self.client = wechat_client
+        self.client = weflow_client
         self.bot_name = config.bot.name
         self.cooldown = config.bot.reply_cooldown_seconds
         # 群会话: {group_id: GroupSession}
