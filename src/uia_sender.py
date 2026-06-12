@@ -40,17 +40,27 @@ def _type_text(text: str):
 
 
 def _focus_wechat():
-    """激活微信窗口。"""
+    """激活微信窗口 — 先最小化控制台，再最大化微信。"""
+    # 获取控制台窗口并最小化
+    console_hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+    if console_hwnd:
+        ctypes.windll.user32.ShowWindow(console_hwnd, 6)  # SW_MINIMIZE
+        time.sleep(0.2)
+
     for cls in ('Qt51514QWindowIcon', 'WeChatMainWndForPC', 'CefTopWindow'):
         hwnd = ctypes.windll.user32.FindWindowW(cls, None)
         if hwnd:
             TID = ctypes.windll.user32.GetWindowThreadProcessId(hwnd, None)
             CTID = ctypes.windll.kernel32.GetCurrentThreadId()
             ctypes.windll.user32.AttachThreadInput(CTID, TID, True)
-            ctypes.windll.user32.ShowWindow(hwnd, 9)
+            ctypes.windll.user32.ShowWindow(hwnd, 1)   # SW_NORMAL
+            time.sleep(0.1)
             ctypes.windll.user32.SetForegroundWindow(hwnd)
             ctypes.windll.user32.BringWindowToTop(hwnd)
             time.sleep(0.5)
+            fg = ctypes.windll.user32.GetForegroundWindow()
+            log.info("WeChat hwnd=%s, foreground=%s", hwnd, fg)
+            ctypes.windll.user32.AttachThreadInput(CTID, TID, False)
             return True
     return False
 
