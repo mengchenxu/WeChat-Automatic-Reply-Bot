@@ -156,7 +156,6 @@ def main():
         # ---- 提取回复中的 @mention 并转换为真实 @ ----
         import re
         reply_mentions = []
-        clean_reply = reply
 
         # 匹配回复中的 @拉丁名（如 @B L U E）和 @中文名（2-4字）
         latin_ms = re.findall(r'@([a-zA-Z][a-zA-Z0-9 ]*(?:\s+[a-zA-Z][a-zA-Z0-9 ]*)*)', reply)
@@ -173,16 +172,17 @@ def main():
                 if real_name not in reply_mentions:
                     reply_mentions.append(real_name)
             else:
-                # 未找到也保留名字，让 UIA 尝试
                 if name not in reply_mentions:
                     reply_mentions.append(name)
 
-            # 从回复文本中移除 @mention（可选：保留名字不删）
-            # clean_reply = clean_reply.replace(f'@{name}', '').strip()
+        # 清理正文：去掉 @名字 避免重复（真实 @ 已在消息开头由 UIA 发送）
+        clean_reply = reply
+        for name in reply_mentions:
+            clean_reply = clean_reply.replace(f'@{name}', '').strip()
 
         # ---- 发送 ----
         display = client.get_display_name(msg.sender_name)
-        client.send_text(reply, roomid, display, at_mentions=reply_mentions)
+        client.send_text(clean_reply, roomid, display, at_mentions=reply_mentions)
         logger.info("Reply: @%s +@%s -> %s", display, reply_mentions, reply[:60])
 
         # ---- 定期更新话题摘要（工作记忆） ----
