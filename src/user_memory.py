@@ -25,6 +25,7 @@ class UserProfile:
     relations: Dict[str, str] = field(default_factory=dict)     # {"wxid_xxx": "同事", "wxid_yyy": "朋友"}
     topics: List[str] = field(default_factory=list)             # 常讨论的话题
     notes: str = ""                                              # LLM 可更新的自由格式备注
+    aliases: List[str] = field(default_factory=list)            # 外号/别名（自动学习）
 
     # 风格学习字段
     speaking_style: str = ""            # LLM 生成的个人风格描述（1句话）
@@ -112,6 +113,7 @@ class UserMemoryStore:
                     notes=d.get("notes", ""),
                     speaking_style=d.get("speaking_style", ""),
                     catchphrases=d.get("catchphrases", []),
+                    aliases=d.get("aliases", []),
                 )
                 self._users[wxid] = profile
             logger.info("已加载 %d 个用户档案", len(self._users))
@@ -136,6 +138,7 @@ class UserMemoryStore:
                     "notes": profile.notes,
                     "speaking_style": profile.speaking_style,
                     "catchphrases": profile.catchphrases,
+                    "aliases": profile.aliases,
                 }
             with open(self.file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -236,7 +239,7 @@ class UserMemoryStore:
         self.save()
 
     def find_by_name(self, name: str) -> Optional[UserProfile]:
-        """按显示名/wxid 模糊查找用户"""
+        """按显示名/wxid/外号 模糊查找用户"""
         name_lower = name.lower().strip()
         # 先精确匹配 wxid
         if name_lower in self._users:
@@ -252,7 +255,22 @@ class UserMemoryStore:
             # 匹配当前名字
             if name_lower in profile.preferred_name.lower():
                 return profile
+            # 匹配外号
+            for alias in profile.aliases:
+                if name_lower in alias.lower():
+                    return profile
         return None
+
+    def add_alias(self, wxid: str, alias: str):
+        """添加一个外号/别名"""
+        profile = self.get_or_create(wxid)
+        alias_clean = alias.strip()
+        if alias_clean and alias_clean not in profile.aliases:
+            profile.aliases.append(alias_clean)
+            if len(profile.aliases) > 10:
+                profile.aliases = profile.aliases[-10:]
+            self.save()
+            logger.info("用户 %s 新增外号: %s", profile.preferred_name or wxid, alias_clean)
 
     # ----------------------------------------------------------------
     # 群上下文

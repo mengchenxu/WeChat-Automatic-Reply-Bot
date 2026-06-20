@@ -143,9 +143,22 @@ def auto_extract_facts(
         match = re.search(pattern, reply)
         if match and match.group(1).strip():
             value = match.group(1).strip()
-            if len(value) <= 20:  # 合理的短事实
+            if len(value) <= 20:
                 user_memory.merge_fact(speaker_wxid, fact_key, value)
                 logger.info("自动提取事实: %s=%s (用户 %s)", fact_key, value, speaker_wxid)
+
+    # 外号检测：从用户消息和 LLM 回复中提取外号
+    # 模式: "叫我xxx"、"大家都叫我xxx"、"{name}就是{target}" 等
+    alias_patterns = [
+        r'(?:叫我|喊我|大家(?:都)?叫我)\s*["「]?(.+?)["」]?(?:[，。！\s]|$)',
+        r'["「](.+?)["」]\s*(?:就是|是)\s*(?:我|本人)',
+    ]
+    for pat in alias_patterns:
+        for m in re.finditer(pat, msg_content):
+            alias = m.group(1).strip()
+            if 1 <= len(alias) <= 10 and alias != "我":
+                user_memory.add_alias(speaker_wxid, alias)
+                logger.info("自动提取外号: %s → %s", speaker_wxid, alias)
 
 
 def extract_facts_from_reply(
@@ -173,7 +186,19 @@ def extract_facts_from_reply(
     clean_reply = re.sub(pattern, _process, reply)
 
     for at_name, key, value in facts:
-        if at_name:
+        # 特殊处理：外号/别名 存到 aliases
+        if key.strip() in ("外号", "别名", "绰号"):
+            if at_name:
+                target = user_memory.find_by_name(at_name)
+                if target:
+                    user_memory.add_alias(target.wxid, value)
+                    logger.info("LLM 记住了 @%s 的外号: %s", at_name, value)
+                else:
+                    logger.debug("未找到用户 @%s，跳过外号", at_name)
+            else:
+                user_memory.add_alias(speaker_wxid, value)
+                logger.info("LLM 记住了当前用户的外号: %s", value)
+        elif at_name:
             target = user_memory.find_by_name(at_name)
             if target:
                 user_memory.merge_fact(target.wxid, key, value)
