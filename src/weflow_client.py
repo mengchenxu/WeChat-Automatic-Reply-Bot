@@ -18,13 +18,49 @@ class WeFlowMessage:
         self.group_name = session_name
         self.raw = data
         # 提取所有 @mention（用于 LLM 上下文）
-        self.mentions = re.findall(r'@(\S+)', self.content or "")
-        # 从 rawContent 提取显示名
+        # rawContent 用   分隔 @mention，比 content 更可靠
         raw_content = data.get("rawContent", "") or ""
+        self.mentions = self._extract_mentions(raw_content, self.content or "")
+
+        # 从 rawContent 提取显示名
         if ":" in raw_content and "\n" in raw_content:
             self.display_name = raw_content.split(":\n")[0]
         else:
             self.display_name = self.sender_name
+
+    @staticmethod
+    def _extract_mentions(raw_content: str, content: str) -> list:
+        """
+        从 rawContent 和 content 中智能提取 @mention。
+        WeChat 用 \\u2005（Four-Per-Em Space）分隔 @mention。
+        同时处理名字中可能包含空格的情况。
+        """
+        mentions = []
+        # 方法1: 从 rawContent 提取（优先，格式更规范）
+        if ":\n" in raw_content:
+            _, rest = raw_content.split(":\n", 1)
+            # \\u2005 是 @mention 之间的分隔符
+            # 格式: @name1 @name2 message
+            for part in rest.split(" "):
+                part = part.strip()
+                if part.startswith("@"):
+                    name = part[1:].strip()
+                    if name:
+                        mentions.append(name)
+        # 方法2: 从 content 提取（兜底）
+        if not mentions:
+            # 先按 \\u2005 分割
+            for part in content.split(" "):
+                part = part.strip()
+                if part.startswith("@"):
+                    name = part[1:].strip()
+                    if name:
+                        mentions.append(name)
+            # 如果仍未匹配到，用简单正则兜底
+            if not mentions:
+                import re
+                mentions = re.findall(r'@(\S+)', content)
+        return mentions
 
     @property
     def is_group(self) -> bool:
