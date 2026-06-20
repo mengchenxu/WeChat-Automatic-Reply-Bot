@@ -109,18 +109,37 @@ class WeFlowClient:
         return self._name_cache.get(wxid, wxid)
 
     def sync_contacts_to_memory(self, user_memory) -> int:
-        """将联系人列表同步到 UserMemoryStore，让机器人认识群里所有人。"""
+        """将群成员列表同步到 UserMemoryStore，让机器人认识群里所有人。"""
         count = 0
-        for wxid, name in self._name_cache.items():
-            profile = user_memory.get(wxid)
-            if not profile:
-                user_memory.record_message(wxid, name)
-                count += 1
-            elif not profile.preferred_name or profile.preferred_name == wxid:
-                profile.preferred_name = name
+        try:
+            # 获取 session 列表，找到所有群聊
+            sessions = self._api_get("/api/v1/sessions")
+            if not sessions:
+                return 0
+            for sess in sessions.get("sessions", []):
+                talker = sess.get("username", "")
+                if not talker or ("@chatroom" not in talker):
+                    continue
+                # 获取该群的全量成员
+                resp = self._api_get(f"/api/v1/group-members?talker={talker}")
+                if not resp or "members" not in resp:
+                    continue
+                for m in resp["members"]:
+                    wxid = m.get("wxid", "")
+                    if not wxid:
+                        continue
+                    name = m.get("displayName") or m.get("nickname") or wxid
+                    profile = user_memory.get(wxid)
+                    if not profile:
+                        user_memory.record_message(wxid, name)
+                        count += 1
+                    elif not profile.preferred_name or profile.preferred_name == wxid:
+                        profile.preferred_name = name
+        except Exception:
+            logger.exception("同步群成员失败")
         if count:
             user_memory.save()
-            logger.info("已同步 %d 个新联系人到用户记忆", count)
+            logger.info("已同步 %d 个群成员到用户记忆", count)
         return count
 
     def find_contact(self, name: str) -> str | None:
