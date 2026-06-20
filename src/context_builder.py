@@ -83,9 +83,11 @@ def build_llm_context(
         for name in mentioned_others:
             profile = user_memory.find_by_name(name)
             if profile is None:
-                # 找不到 → 新建用户档案（可能是群里还没发过言的人）
-                user_memory.record_message(name, name)
+                # 找不到 → 新建并立即保存（首次被 @的群成员）
+                user_memory.get_or_create(name, name)
+                user_memory.save()
                 profile = user_memory.get(name)
+                logger.info("发现新群成员: %s", name)
             if profile and profile.wxid != speaker_wxid:
                 display = profile.preferred_name or name
                 ctx = profile.get_context_summary()
