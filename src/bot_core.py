@@ -1,7 +1,9 @@
 """
 Bot 核心 — 消息路由、命令系统、多群会话隔离、用户记忆集成。
 """
+import json
 import logging
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -32,6 +34,11 @@ class GroupSession:
     active_users: Set[str] = field(default_factory=set)  # 本群活跃用户 wxid 集合
     group_context: str = ""             # 群级别上下文摘要
     message_count: int = 0              # 本群已处理消息数（用于触发摘要）
+    # 工作记忆字段
+    topic_summary: str = ""               # 当前话题摘要
+    topic_keywords: list = field(default_factory=list)  # 话题关键词
+    message_since_summary: int = 0        # 距上次话题摘要的消息数
+    message_since_memory: int = 0         # 距上次记忆提取的消息数
 
 
 class BotCore:
@@ -43,14 +50,18 @@ class BotCore:
     4. 用户追踪 — 记录群内活跃用户
     """
 
-    def __init__(self, config: AppConfig, weflow_client, user_memory=None):
+    def __init__(self, config: AppConfig, weflow_client, user_memory=None, data_dir: str = "data"):
         self.config = config
         self.client = weflow_client
         self.bot_name = config.bot.name
         self.cooldown = config.bot.reply_cooldown_seconds
         self.user_memory = user_memory  # UserMemoryStore，由 main.py 注入
+        self.context_summary_interval = config.session.context_summary_interval
+        self.data_dir = data_dir
         # 群会话: {group_id: GroupSession}
         self._sessions: Dict[str, GroupSession] = {}
+        # 加载持久化的群上下文
+        self._load_group_contexts()
 
     # ----------------------------------------------------------------
     # 入口：处理一条消息
@@ -87,6 +98,8 @@ class BotCore:
         session = self._get_session(roomid)
         session.active_users.add(speaker_wxid)
         session.message_count += 1
+        session.message_since_summary += 1
+        session.message_since_memory += 1
 
         # ---- 5. 命令优先 ----
         if is_at_bot and content.startswith("/"):
@@ -163,12 +176,109 @@ class BotCore:
 
     def _get_session(self, roomid: str) -> GroupSession:
         if roomid not in self._sessions:
-            max_history = self.config.session.max_history_rounds * 2
             self._sessions[roomid] = GroupSession(
                 group_id=roomid,
-                history=deque(maxlen=max_history),
+                history=deque(maxlen=20),
             )
         return self._sessions[roomid]
+
+    # ----------------------------------------------------------------
+    # 群上下文记忆
+    # ----------------------------------------------------------------
+    def should_summarize_context(self, roomid: str) -> bool:
+        """检查是否应该触发群上下文摘要更新。"""
+        session = self._get_session(roomid)
+        # 每 N 条消息触发一次，且至少有 3 轮对话
+        if session.message_count > 0 and session.message_count % self.context_summary_interval == 0:
+            if len(session.history) >= 6:  # 至少 3 轮对话
+                return True
+        return False
+
+    def update_group_context(self, roomid: str, context: str):
+        """更新群级别上下文摘要。"""
+        session = self._get_session(roomid)
+        if context.strip():
+            session.group_context = context.strip()
+            logger.info("群 %s 上下文已更新 (%d 字): %s",
+                        roomid[:20], len(context), context[:80])
+            self._save_group_contexts()
+
+    def get_group_context(self, roomid: str) -> str:
+        """获取群上下文摘要。"""
+        session = self._get_session(roomid)
+        return session.group_context
+
+    # ----------------------------------------------------------------
+    # 话题追踪与记忆提取触发
+    # ----------------------------------------------------------------
+    def should_update_topic(self, roomid: str) -> bool:
+        """是否应该触发话题摘要更新（每 10 条消息）。"""
+        session = self._get_session(roomid)
+        return session.message_since_summary >= 10
+
+    def should_extract_memory(self, roomid: str) -> bool:
+        """是否应该触发情景记忆提取（每 15 条消息）。"""
+        session = self._get_session(roomid)
+        return session.message_since_memory >= 15
+
+    def reset_summary_counter(self, roomid: str):
+        session = self._get_session(roomid)
+        session.message_since_summary = 0
+
+    def reset_memory_counter(self, roomid: str):
+        session = self._get_session(roomid)
+        session.message_since_memory = 0
+
+    def extract_context_from_reply(self, roomid: str, reply: str) -> Optional[str]:
+        """
+        从 LLM 回复中提取群上下文更新指令。
+        支持格式: /context 群聊背景描述
+        返回提取的上下文文本，或 None。
+        """
+        import re
+        match = re.search(r'/context\s+(.+?)(?:\n|$)', reply)
+        if match:
+            return match.group(1).strip()
+        return None
+
+    # ----------------------------------------------------------------
+    # 群上下文持久化
+    # ----------------------------------------------------------------
+    def _group_contexts_path(self) -> str:
+        return os.path.join(self.data_dir, "group_contexts.json")
+
+    def _save_group_contexts(self):
+        """保存所有群上下文到磁盘。"""
+        try:
+            data = {}
+            for roomid, session in self._sessions.items():
+                if session.group_context:
+                    data[roomid] = {
+                        "context": session.group_context,
+                        "message_count": session.message_count,
+                    }
+            if data:
+                with open(self._group_contexts_path(), "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                logger.debug("已保存 %d 个群上下文", len(data))
+        except Exception:
+            logger.exception("保存群上下文失败")
+
+    def _load_group_contexts(self):
+        """从磁盘加载群上下文。"""
+        path = self._group_contexts_path()
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for roomid, d in data.items():
+                session = self._get_session(roomid)
+                session.group_context = d.get("context", "")
+                session.message_count = d.get("message_count", 0)
+            logger.info("已加载 %d 个群上下文", len(data))
+        except Exception:
+            logger.exception("加载群上下文失败")
 
     # ----------------------------------------------------------------
     # 命令处理
