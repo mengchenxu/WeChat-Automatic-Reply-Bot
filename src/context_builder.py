@@ -32,6 +32,28 @@ def build_llm_context(
     if session.group_context:
         parts.append(f"[群聊背景]\n{session.group_context}")
 
+    # ---- 1.5 群内风格 ----
+    style_parts = []
+    if session.group_style:
+        style_parts.append(f"整体风格: {session.group_style}")
+    if session.top_words:
+        style_parts.append(f"高频词: {', '.join(session.top_words[:10])}")
+    if session.top_emojis:
+        style_parts.append(f"常用表情: {' '.join(session.top_emojis[:5])}")
+    if style_parts:
+        parts.append("[群内风格]\n" + "\n".join(style_parts))
+
+    # ---- 1.6 核心成员风格 ----
+    if session.active_users:
+        styled_users = []
+        for wxid in session.active_users:
+            profile = user_memory.get(wxid)
+            if profile and profile.speaking_style:
+                name = profile.preferred_name or wxid
+                styled_users.append(f"  {name}: {profile.speaking_style}")
+        if styled_users:
+            parts.append("[核心成员风格]\n" + "\n".join(styled_users))
+
     # ---- 2. 相关情景记忆 ----
     if group_memory and session.topic_keywords:
         try:
