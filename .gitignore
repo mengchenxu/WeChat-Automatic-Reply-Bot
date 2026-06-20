@@ -23,6 +23,10 @@ logs/
 Thumbs.db
 Desktop.ini
 
+# 工具生成
+.codegraph/
+reasonix.toml
+
 # 用户记忆数据（含隐私，不提交）
 data/
 
