@@ -1,7 +1,7 @@
 """管道编排 — 主循环：Parse → Enrich → Prompt → LLM → Decode → Send"""
 import logging
 import time
-from typing import Dict, List, Optional
+from typing import Optional
 
 from src.config import AppConfig
 from src.store import Store, ChatMsg
@@ -197,8 +197,3 @@ class Pipeline:
             logger.info("Loaded %d recent messages for room=%s", len(recent), talker[:20])
         if total:
             logger.info("Startup history loaded: %d messages total", total)
-
-
-    def summarize_context(self, history: list, existing: str = "") -> str:
-        """LLM 群聊摘要（桥接到 LLMClient.summarize_context）。"""
-        return self.llm.summarize_context(history, existing)

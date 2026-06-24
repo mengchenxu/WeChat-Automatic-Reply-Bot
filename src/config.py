@@ -1,8 +1,6 @@
 """配置加载 — 从 config.yaml 读取并返回结构化配置"""
 import os
 from dataclasses import dataclass, field
-from typing import List
-
 import yaml
 
 

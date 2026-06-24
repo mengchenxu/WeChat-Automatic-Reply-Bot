@@ -118,7 +118,7 @@ class LLMClient:
         prompt = f"""请阅读以下群聊对话，总结当前群聊的背景信息。用 2-4 句话概括：
 
 {existing}最近对话:
-{chr(10).join(lines)}
+{"\n".join(lines)}
 
 请提炼并返回（纯文本，不要 markdown 格式）：
 1. 群成员特征（谁是谁，有什么特点/偏好）
