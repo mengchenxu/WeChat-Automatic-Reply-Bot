@@ -101,6 +101,53 @@ class LLMClient:
             return _fallback_reply(e)
 
 
+    def summarize_context(self, history: list, existing_context: str = "") -> str:
+        """让 LLM 从对话历史中提取群聊摘要。"""
+        if not history:
+            return ""
+
+        lines = []
+        for m in history[-15:]:
+            role = "用户" if (hasattr(m, 'role') and m.role == "user") else "助手"
+            name = getattr(m, 'sender_name', '') or ''
+            tag = f"{role}({name})" if name else role
+            lines.append(f"[{tag}]: {m.content[:200]}")
+
+        existing = f"之前的群聊背景:\n{existing_context}\n\n" if existing_context else ""
+
+        prompt = f"""请阅读以下群聊对话，总结当前群聊的背景信息。用 2-4 句话概括：
+
+{existing}最近对话:
+{chr(10).join(lines)}
+
+请提炼并返回（纯文本，不要 markdown 格式）：
+1. 群成员特征（谁是谁，有什么特点/偏好）
+2. 当前讨论的主要话题
+3. 任何值得记住的共识或决定
+
+注意：
+- 如果之前已有背景，请基于它更新/补充，不要丢失旧信息
+- 每条信息控制在 1-2 句
+- 不要编造信息
+- 只需返回总结文字，无需前缀"""
+
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是一个群聊记录员，负责简洁地总结群聊背景信息。"},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=512,
+                temperature=0.3,
+            )
+            summary = resp.choices[0].message.content
+            return _sanitize(summary) if summary else ""
+        except Exception:
+            logger.exception("上下文摘要生成失败")
+            return ""
+
+
 def _sanitize(text: Optional[str]) -> str:
     """清理 LLM 回复：截断超长、处理空值。"""
     if not text:
