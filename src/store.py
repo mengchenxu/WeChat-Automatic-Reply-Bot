@@ -1,9 +1,13 @@
 """统一数据层 — Person, Group, GroupMemory, ChatMsg + Store"""
 import json
+import logging
 import os
 import time
+import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -30,9 +34,9 @@ class FactEntry:
 class Person:
     wxid: str
     mention_name: str = ""
-    aliases: list = field(default_factory=list)
-    facts: list = field(default_factory=list)  # list[FactEntry]
-    catchphrases: list = field(default_factory=list)
+    aliases: List[str] = field(default_factory=list)
+    facts: List[FactEntry] = field(default_factory=list)
+    catchphrases: List[str] = field(default_factory=list)
     first_seen: float = 0.0
     last_seen: float = 0.0
 
@@ -85,9 +89,18 @@ class Person:
 class GroupMemory:
     id: str
     text: str
-    keywords: list = field(default_factory=list)
+    keywords: List[str] = field(default_factory=list)
     category: str = "fact"
     importance: int = 3
+    timestamp: float = 0.0
+
+
+@dataclass
+class ChatMsg:
+    role: str  # "user" | "assistant"
+    content: str
+    sender_name: str = ""
+    sender_wxid: str = ""
     timestamp: float = 0.0
 
 
@@ -97,14 +110,13 @@ class Group:
     name: str = ""
     context: str = ""
     topic: str = ""
-    memories: list = field(default_factory=list)  # list[GroupMemory]
-    history: list = field(default_factory=list)    # list[ChatMsg]
+    memories: List[GroupMemory] = field(default_factory=list)
+    history: List[ChatMsg] = field(default_factory=list)
     last_msg_at: float = 0.0
     msg_count: int = 0
 
-    def add_memory(self, text: str, keywords: list = None, category: str = "fact", importance: int = 3) -> GroupMemory:
-        import hashlib
-        mid = hashlib.md5(f"{self.room_id}:{text}:{time.time()}".encode()).hexdigest()[:12]
+    def add_memory(self, text: str, keywords: List[str] = None, category: str = "fact", importance: int = 3) -> GroupMemory:
+        mid = uuid.uuid4().hex[:12]
         for m in self.memories:
             if m.text.strip() == text.strip():
                 m.keywords = list(set(m.keywords + (keywords or [])))
@@ -133,15 +145,6 @@ class Group:
         return [m for _, m in scored[:limit]]
 
 
-@dataclass
-class ChatMsg:
-    role: str  # "user" | "assistant"
-    content: str
-    sender_name: str = ""
-    sender_wxid: str = ""
-    timestamp: float = 0.0
-
-
 # ============================================================
 # Store
 # ============================================================
@@ -149,7 +152,7 @@ class Store:
     def __init__(self):
         self._people: Dict[str, Person] = {}
         self._groups: Dict[str, Group] = {}
-        self._meta: dict = {"version": 1}
+        self._meta: Dict[str, Any] = {"version": 1, "last_sync": 0}
 
     # -- Person --
     def get_person(self, wxid: str) -> Optional[Person]:
@@ -196,15 +199,19 @@ class Store:
                         return p
         return None
 
-    def resolve_name(self, name: str) -> tuple:
+    def resolve_name(self, name: str) -> Tuple[Optional[Person], str]:
+        """解析名字，返回 (Person, matched_name)。找不到时创建占位 Person。"""
         p = self.find_person_by_name(name)
         if p:
-            # 如果是精确匹配 alias，返回 alias 作为 matched name
             nl = name.lower().strip()
             for alias in p.aliases:
                 if nl == alias.lower():
                     return (p, alias)
             return (p, p.mention_name or name)
+        # Step 5: 找不到 → 创建占位 Person，以后会学到真名
+        if name and len(name) >= 2:
+            p = self.get_or_create_person(name, name)
+            return (p, name)
         return (None, "")
 
     @staticmethod
@@ -313,20 +320,35 @@ class Store:
         return {"meta": self._meta, "people": people, "groups": groups}
 
     def save(self, path: str = "data/store.json"):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        data = self.to_dict()
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
+        try:
+            dirname = os.path.dirname(path)
+            if dirname:  # 避免 path="store.json" 时 os.makedirs("") 崩溃
+                os.makedirs(dirname, exist_ok=True)
+            data = self.to_dict()
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except Exception:
+            # 清理残留 tmp 文件
+            try:
+                if os.path.exists(path + ".tmp"):
+                    os.remove(path + ".tmp")
+            except Exception:
+                pass
+            logger.exception("保存 Store 失败: %s", path)
 
     @classmethod
     def load(cls, path: str = "data/store.json") -> "Store":
         store = cls()
         if not os.path.exists(path):
             return store
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            logger.exception("加载 Store 失败，从空开始: %s", path)
+            return store
 
         store._meta = data.get("meta", {"version": 1})
 

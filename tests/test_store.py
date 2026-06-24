@@ -1,7 +1,5 @@
 """Store 数据层测试 — 24 个测试覆盖 Person, Group, Memory, ChatMsg, Store CRUD, JSON save/load, 名字解析, 历史管理"""
 import pytest
-import json
-import os
 from src.store import Store, Person, Group, ChatMsg, GroupMemory, FactEntry
 
 
@@ -143,10 +141,13 @@ def test_resolve_name_substring():
     assert person.wxid == "wxid_b"
 
 
-def test_resolve_name_not_found():
+def test_resolve_name_not_found_creates_placeholder():
+    """找不到时创建占位 Person，bot 以后会学到真名。"""
     store = Store()
     person, matched = store.resolve_name("不存在的人")
-    assert person is None
+    assert person is not None
+    assert person.mention_name == "不存在的人"
+    assert matched == "不存在的人"
 
 
 def test_find_person_by_name():
@@ -245,7 +246,31 @@ def test_store_save_load_roundtrip(tmp_path):
     assert len(g2.history) == 1
 
 
-def test_store_load_nonexistent_returns_empty():
-    store = Store.load("data/nonexistent.json")
+def test_store_load_nonexistent_returns_empty(tmp_path):
+    store = Store.load(str(tmp_path / "nonexistent.json"))
     assert len(store._people) == 0
     assert len(store._groups) == 0
+
+
+def test_resolve_name_creates_placeholder():
+    store = Store()
+    person, matched = store.resolve_name("新人甲")
+    assert person is not None
+    assert matched == "新人甲"
+    assert person.mention_name == "新人甲"
+
+
+def test_store_load_corrupt_json(tmp_path):
+    path = tmp_path / "corrupt.json"
+    path.write_text("not valid json {{{", encoding="utf-8")
+    store = Store.load(str(path))
+    assert len(store._people) == 0  # 应该从空开始，不崩溃
+
+
+def test_store_save_no_dirname(tmp_path):
+    store = Store()
+    store.get_or_create_person("wxid_x", "test")
+    # 测试 path 在当前目录时不崩溃
+    path = str(tmp_path / "sub" / "store.json")
+    store.save(path)
+    assert Store.load(path).get_person("wxid_x") is not None
