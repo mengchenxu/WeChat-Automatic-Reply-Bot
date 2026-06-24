@@ -66,7 +66,28 @@ def test_parse_private_message_ignored():
         "rawContent": "sender:\n你好",
         "senderUsername": "wxid_a",
         "localId": "msg_001",
-        "talker": "wxid_a",  # 不是 chatroom
+        "talker": "wxid_a",
     }
     result = parse(msg, bot_names=["鼠鼠"])
     assert result is None
+
+
+def test_parse_real_weflow_message():
+    """用真实 WeFlowMessage 对象测试——防止 dict/object 不兼容。"""
+    from src.weflow_client import WeFlowMessage
+    raw = {
+        "content": "@鼠鼠 @子南 你好",
+        "rawContent": "xiaoleilei169816:\n@鼠鼠 @子南  你好",
+        "senderUsername": "xiaoleilei169816",
+        "localId": "msg_real_001",
+        "createTime": 1234567890,
+        "talker": "43495935852@chatroom",
+    }
+    wm = WeFlowMessage(raw, session_type="group", session_name="test")
+    wm.session_id = "43495935852@chatroom"
+
+    result = parse(wm, bot_names=["鼠鼠"])
+    assert result is not None
+    assert result.is_at_bot is True
+    assert "子南" in result.raw_mentions
+    assert "鼠鼠" not in result.content
