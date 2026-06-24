@@ -117,10 +117,9 @@ class WeFlowClient:
         return self._name_cache.get(wxid, wxid)
 
     def sync_contacts_to_memory(self, user_memory) -> int:
-        """将群成员列表同步到 UserMemoryStore，让机器人认识群里所有人。"""
+        """将群成员列表同步到 UserMemoryStore，设置基准 mention_name。"""
         count = 0
         try:
-            # 获取 session 列表，找到所有群聊
             sessions = self._api_get("/api/v1/sessions")
             if not sessions:
                 return 0
@@ -128,7 +127,6 @@ class WeFlowClient:
                 talker = sess.get("username", "")
                 if not talker or ("@chatroom" not in talker):
                     continue
-                # 获取该群的全量成员
                 resp = self._api_get(f"/api/v1/group-members?talker={talker}")
                 if not resp or "members" not in resp:
                     continue
@@ -136,16 +134,33 @@ class WeFlowClient:
                     wxid = m.get("wxid", "")
                     if not wxid:
                         continue
-                    name = m.get("displayName") or m.get("nickname") or wxid
-                    # 同步到名缓存（修复 get_display_name 只返回 wxid 的问题）
-                    self._name_cache[wxid] = name
+                    # 群成员的真实显示名（可为空）
+                    raw_name = m.get("displayName") or m.get("nickname") or ""
+                    is_human_name = raw_name and not raw_name.startswith("wxid_")
+
+                    # 同步到名缓存
+                    self._name_cache[wxid] = raw_name or wxid
+
                     # 同步到用户记忆
                     profile = user_memory.get(wxid)
                     if not profile:
-                        user_memory.record_message(wxid, name)
+                        user_memory.record_message(wxid, raw_name or wxid)
+                        profile = user_memory.get(wxid)
                         count += 1
-                    elif not profile.preferred_name or profile.preferred_name == wxid:
-                        profile.preferred_name = name
+
+                    # 设置基准 mention_name（人类可读名，永不覆盖）
+                    if is_human_name and not profile.mention_name:
+                        profile.mention_name = raw_name
+                        logger.info("mention_name 已设置: wxid=%s -> %s", wxid[:16], raw_name)
+
+                    # preferred_name 作为辅助名
+                    if not profile.preferred_name or profile.preferred_name == wxid:
+                        if is_human_name:
+                            profile.preferred_name = raw_name
+
+                    # 把人类可读名也加进别名，方便搜索
+                    if is_human_name and raw_name not in profile.aliases:
+                        profile.aliases.append(raw_name)
         except Exception:
             logger.exception("同步群成员失败")
         if count:

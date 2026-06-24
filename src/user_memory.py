@@ -16,8 +16,9 @@ logger = logging.getLogger(__name__)
 class UserProfile:
     """群成员档案"""
     wxid: str
+    mention_name: str = ""                                     # 基准 @mention 名（联系人 API 写入，永不覆盖）
     display_names: List[str] = field(default_factory=list)   # 历史显示名
-    preferred_name: str = ""                                   # 当前使用的名字
+    preferred_name: str = ""                                   # 消息中出现的名字（可能变化）
     first_seen: float = 0.0
     last_seen: float = 0.0
     message_count: int = 0
@@ -30,6 +31,14 @@ class UserProfile:
     # 风格学习字段
     speaking_style: str = ""            # LLM 生成的个人风格描述（1句话）
     catchphrases: list = field(default_factory=list)  # 口头禅
+
+    def get_mention_name(self) -> str:
+        """返回可用于 @mention 的权威名字。优先 mention_name，其次 preferred_name，最后 wxid。"""
+        name = self.mention_name or self.preferred_name or self.wxid
+        # 如果解析出来是 wxid，说明没有人类可读的名字，返回空让调用方处理
+        if name.startswith("wxid_") or name.startswith("wxid-"):
+            return ""
+        return name
 
     def update_name(self, name: str):
         """追踪显示名变化"""
@@ -56,8 +65,9 @@ class UserProfile:
     def get_context_summary(self) -> str:
         """生成 LLM 可用的用户摘要"""
         parts = []
-        if self.preferred_name:
-            parts.append(f"名字: {self.preferred_name}")
+        display = self.mention_name or self.preferred_name
+        if display:
+            parts.append(f"名字: {display}")
         if self.known_facts:
             facts = ", ".join(f"{k}={v}" for k, v in self.known_facts.items())
             parts.append(f"已知: {facts}")
@@ -102,6 +112,7 @@ class UserMemoryStore:
             for wxid, d in data.items():
                 profile = UserProfile(
                     wxid=wxid,
+                    mention_name=d.get("mention_name", ""),
                     display_names=d.get("display_names", []),
                     preferred_name=d.get("preferred_name", ""),
                     first_seen=d.get("first_seen", 0.0),
@@ -127,6 +138,7 @@ class UserMemoryStore:
             for wxid, profile in self._users.items():
                 data[wxid] = {
                     "wxid": profile.wxid,
+                    "mention_name": profile.mention_name,
                     "display_names": profile.display_names,
                     "preferred_name": profile.preferred_name,
                     "first_seen": profile.first_seen,
@@ -239,26 +251,29 @@ class UserMemoryStore:
         self.save()
 
     def find_by_name(self, name: str) -> Optional[UserProfile]:
-        """按显示名/wxid/外号 模糊查找用户"""
+        """按 mention_name / 外号 / 历史名 / wxid 查找用户。mention_name 优先匹配。"""
         name_lower = name.lower().strip()
         # 先精确匹配 wxid
         if name_lower in self._users:
             return self._users[name_lower]
         for profile in self._users.values():
-            # 匹配 wxid
-            if name_lower in profile.wxid.lower():
-                return profile
-            # 匹配历史显示名
-            for dn in profile.display_names:
-                if name_lower in dn.lower():
-                    return profile
-            # 匹配当前名字
-            if name_lower in profile.preferred_name.lower():
+            # 匹配基准 @mention 名（最高优先级）
+            if profile.mention_name and name_lower in profile.mention_name.lower():
                 return profile
             # 匹配外号
             for alias in profile.aliases:
                 if name_lower in alias.lower():
                     return profile
+            # 匹配当前名字
+            if name_lower in profile.preferred_name.lower():
+                return profile
+            # 匹配历史显示名
+            for dn in profile.display_names:
+                if name_lower in dn.lower():
+                    return profile
+            # 匹配 wxid
+            if name_lower in profile.wxid.lower():
+                return profile
         return None
 
     def add_alias(self, wxid: str, alias: str):

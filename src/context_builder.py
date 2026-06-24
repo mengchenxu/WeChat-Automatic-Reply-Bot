@@ -177,6 +177,9 @@ def _resolve_entities_in_message(
         if not profile:
             continue
         names = set()
+        # mention_name 是基准名，优先加入
+        if profile.mention_name:
+            names.add(profile.mention_name)
         if profile.preferred_name:
             names.add(profile.preferred_name)
         for dn in profile.display_names:

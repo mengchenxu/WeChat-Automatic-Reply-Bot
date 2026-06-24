@@ -180,7 +180,8 @@ def main():
             real_name = None
             profile = user_memory.find_by_name(name)
             if profile:
-                real_name = profile.preferred_name or name
+                # 优先用 mention_name（基准名），其次是 preferred_name
+                real_name = profile.get_mention_name() or profile.preferred_name or name
             else:
                 wxid = client.find_contact(name)
                 if wxid:
@@ -190,11 +191,9 @@ def main():
                     logger.warning("Unresolved mention discarded: '%s'", name)
                     continue
 
-            # 替换文本中的 @LLM名 → @真实名（但别用 wxid 覆盖人类可读的名字）
+            # 替换文本中的 @LLM名 → @权威 mention 名（确保 UIA 选对人）
             if real_name and real_name != name:
-                # 如果解析结果是 wxid，LLM 写的名字更好（群里的人认的是名字不是 wxid）
-                if not (real_name.startswith("wxid_") or real_name.startswith("wxid-")):
-                    inline_reply = inline_reply.replace(f'@{name}', f'@{real_name}')
+                inline_reply = inline_reply.replace(f'@{name}', f'@{real_name}')
 
         # 去掉 LLM 可能在开头写的 @发送者（由 at_sender 自动处理，避免重复）
         if sender_display:
