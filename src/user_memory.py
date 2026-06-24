@@ -303,6 +303,10 @@ class UserMemoryStore:
             return f"[{name}]: {summary}"
         return f"[{name}]: 暂无已知信息"
 
+    def get_all_wxids(self) -> list:
+        """返回所有已知用户的 wxid 列表（供实体解析等使用）。"""
+        return list(self._users.keys())
+
     @property
     def user_count(self) -> int:
         return len(self._users)

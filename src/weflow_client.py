@@ -173,6 +173,21 @@ class WeFlowClient:
         threading.Thread(target=self._poll_loop, daemon=True, name="weflow-poll").start()
         logger.info("WeFlow REST polling started")
 
+    def start_periodic_sync(self, user_memory, interval_sec: int = 1800):
+        """每 interval_sec 秒刷新 name_cache 并同步新群成员到 user_memory。"""
+        def _sync_loop():
+            while self._running:
+                time.sleep(interval_sec)
+                try:
+                    self._build_name_cache()
+                    new_count = self.sync_contacts_to_memory(user_memory)
+                    if new_count:
+                        logger.info("Periodic sync: %d new members discovered", new_count)
+                except Exception:
+                    logger.exception("Periodic sync error")
+        threading.Thread(target=_sync_loop, daemon=True, name="weflow-sync").start()
+        logger.info("Periodic name cache sync started (interval=%ds)", interval_sec)
+
     def on_message(self, callback):
         self._callback = callback
 

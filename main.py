@@ -76,6 +76,8 @@ def main():
     # 同步联系人 → 让机器人认识群里所有人
     synced = client.sync_contacts_to_memory(user_memory)
     logger.info("Contacts synced: %d new members", synced)
+    # 启动定时 name_cache 刷新（每 30 分钟），防止联系人过期
+    client.start_periodic_sync(user_memory, interval_sec=1800)
     bot = BotCore(config, client, user_memory=user_memory,
                   style_observer=style_observer, data_dir="data")
 
@@ -153,37 +155,45 @@ def main():
         # ---- 记录回复到会话历史 ----
         bot.add_reply(roomid, reply)
 
-        # ---- 提取回复中的 @mention 并转换为真实 @ ----
+        # ---- 提取回复中的 @mention，替换为真实名（内联 @） ----
         import re
-        reply_mentions = []
+        sender_display = client.get_display_name(msg.sender_name)
+        inline_reply = reply
 
         # 匹配回复中的 @拉丁名（如 @B L U E）和 @中文名（2-4字）
         latin_ms = re.findall(r'@([a-zA-Z][a-zA-Z0-9 ]*(?:\s+[a-zA-Z][a-zA-Z0-9 ]*)*)', reply)
         cjk_ms = re.findall(r'@([一-鿿぀-ゟ가-힯]{2,4})', reply)
+        all_names = list(set(latin_ms + cjk_ms))
 
-        for name in latin_ms + cjk_ms:
+        for name in all_names:
             name = name.strip()
-            if not name or name in reply_mentions:
+            if not name:
                 continue
-            # 查找这个人的真实显示名
+            # 三层容错：find_by_name → find_contact → 丢弃
+            real_name = None
             profile = user_memory.find_by_name(name)
             if profile:
                 real_name = profile.preferred_name or name
-                if real_name not in reply_mentions:
-                    reply_mentions.append(real_name)
             else:
-                if name not in reply_mentions:
-                    reply_mentions.append(name)
+                wxid = client.find_contact(name)
+                if wxid:
+                    real_name = client.get_display_name(wxid)
+                    logger.info("Mention resolved via contact cache: '%s' -> '%s'", name, real_name)
+                else:
+                    logger.warning("Unresolved mention discarded: '%s'", name)
+                    continue
 
-        # 清理正文：去掉 @名字 避免重复（真实 @ 已在消息开头由 UIA 发送）
-        clean_reply = reply
-        for name in reply_mentions:
-            clean_reply = clean_reply.replace(f'@{name}', '').strip()
+            # 替换文本中的 @LLM名 → @真实名（确保 UIA 能选对人）
+            if real_name and real_name != name:
+                inline_reply = inline_reply.replace(f'@{name}', f'@{real_name}')
 
-        # ---- 发送 ----
-        display = client.get_display_name(msg.sender_name)
-        client.send_text(clean_reply, roomid, display, at_mentions=reply_mentions)
-        logger.info("Reply: @%s +@%s -> %s", display, reply_mentions, reply[:60])
+        # 去掉 LLM 可能在开头写的 @发送者（由 at_sender 自动处理，避免重复）
+        if sender_display:
+            inline_reply = re.sub(rf'^@?\s*{re.escape(sender_display)}\s*[,，]?\s*', '', inline_reply).strip()
+
+        # ---- 发送（内联 @mention） ----
+        client.send_text(inline_reply, roomid, sender_display)
+        logger.info("Reply: @%s -> %s", sender_display, reply[:60])
 
         # ---- 定期更新话题摘要（工作记忆） ----
         if bot.should_update_topic(roomid):

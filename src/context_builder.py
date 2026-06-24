@@ -102,6 +102,40 @@ def build_llm_context(
         if mentioned_info:
             parts.append("消息中 @了:\n" + "\n".join(mentioned_info))
 
+    # ---- 4.5 实体解析：扫描消息正文中提到的已知群成员 ----
+    entities = []
+    mentionable_names = []
+    # 使用所有已知用户（而非 active_users），确保重启后也能识别
+    all_wxids = user_memory.get_all_wxids()
+    if all_wxids:
+        entities, mentionable_names = _resolve_entities_in_message(
+            msg.content, user_memory, all_wxids,
+            group_memory, msg.roomid
+        )
+        # 过滤掉已在显式 @了 列表里的人（避免重复）
+        mentioned_set = {m.lower() for m in mentioned_others}
+        new_entities = [e for e in entities if e["name"].lower() not in mentioned_set]
+        if entities:
+            logger.info("实体解析: 在消息中扫到 %d 个已知成员: %s",
+                        len(entities),
+                        [(e["name"], e["profile"].preferred_name or e["name"]) for e in entities])
+        if new_entities:
+            entity_lines = []
+            for e in new_entities:
+                name = e["profile"].preferred_name or e["name"]
+                ctx = e["profile"].get_context_summary()
+                line = f"  @{name}"
+                if ctx:
+                    line += f" — {ctx}"
+                entity_lines.append(line)
+                # 附上相关群记忆（让 LLM 知道"这人是干嘛的"）
+                if e.get("memories"):
+                    for mem in e["memories"]:
+                        entity_lines.append(f"    相关: {mem.content}")
+            if entity_lines:
+                parts.append("[消息中可能提到的人]\n" + "\n".join(entity_lines))
+                logger.info("实体解析注入上下文: %d 人（去重后）", len(new_entities))
+
     # ---- 5. 群内其他活跃成员 ----
     if session.active_users:
         other_users = session.active_users - {speaker_wxid}
@@ -125,10 +159,145 @@ def build_llm_context(
         if recent:
             parts.append("[最近对话]\n" + "\n".join(recent))
 
-    # ---- 8. 当前消息 ----
+    # ---- 8. 动态格式指令（近因指令，确保 LLM 用 @名字） ----
+    # 当前发言人由 at_sender 自动 @，LLM 不需要在开头再写一次
+    all_mentionable = [m for m in mentioned_others if m.lower() != speaker_name.lower()]
+    for e in entities:
+        name = e["profile"].preferred_name or e["name"]
+        if name.lower() != speaker_name.lower() and name not in all_mentionable:
+            all_mentionable.append(name)
+    if all_mentionable:
+        parts.append(
+            f"[重要：回复格式]\n"
+            f"回复对象 @{speaker_name} 已由系统自动处理，你无需在回复开头写 @{speaker_name}。\n"
+            f"如果你在正文中提到以下其他群成员，在提到的地方用 @名字 格式（内联 mention）：{', '.join(all_mentionable)}\n"
+            f"示例: \"宁这转进如风啊😅 刚才还香炉了，现在又变成想她了，宁这抽象程度已经超越 @贯一 的cos马好吧💧\""
+        )
+
+    # ---- 9. 当前消息 ----
     parts.append(f"[消息内容]\n{msg.content}")
 
     return "\n\n".join(parts)
+
+
+# ----------------------------------------------------------------
+# 实体解析：扫描消息正文中提到的已知群成员
+# ----------------------------------------------------------------
+def _resolve_entities_in_message(
+    content: str,
+    user_memory,
+    active_users: set,
+    group_memory,
+    room_id: str,
+) -> tuple:
+    """
+    扫描消息正文，找到可能被自然提及的已知群成员。
+    不依赖微信 @ 标记 — 纯文本"子南那个事"也会被识别。
+
+    返回:
+      entities: [{"name": "子南", "profile": UserProfile, "memories": [...]}, ...]
+      mentionable_names: ["子南", "贯一", ...]
+    """
+    if not content or not active_users:
+        return [], []
+
+    # 收集所有候选名字，按长度降序排列（最长匹配优先，避免"子"误匹配"子南"）
+    candidates: list[tuple[int, str, str, object]] = []  # (len, name, wxid, profile)
+    for wxid in active_users:
+        profile = user_memory.get(wxid)
+        if not profile:
+            continue
+        names = set()
+        if profile.preferred_name:
+            names.add(profile.preferred_name)
+        for dn in profile.display_names:
+            if dn:
+                names.add(dn)
+        for alias in profile.aliases:
+            if alias:
+                names.add(alias)
+        for name in names:
+            if name and len(name) >= 2:
+                candidates.append((len(name), name, wxid, profile))
+
+    # 去重（同名只保留一份）+ 按长度降序
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    seen_names = set()
+    unique_candidates = []
+    for length, name, wxid, profile in candidates:
+        nlower = name.lower()
+        if nlower not in seen_names:
+            seen_names.add(nlower)
+            unique_candidates.append((length, name, wxid, profile))
+
+    # 在消息中搜索，避免重叠匹配
+    matched_positions: set = set()
+    entities_by_wxid: dict = {}
+
+    content_lower = content.lower()
+    for _, name, wxid, profile in unique_candidates:
+        name_lower = name.lower()
+        search_start = 0
+        while True:
+            idx = content_lower.find(name_lower, search_start)
+            if idx == -1:
+                break
+
+            # 重叠检查：该位置是否已被更长的名字占用
+            positions = set(range(idx, idx + len(name)))
+            if positions & matched_positions:
+                search_start = idx + 1
+                continue
+
+            # 拉丁名词边界检查
+            if _is_latin_name(name):
+                if not _latin_word_boundary(content, idx, len(name)):
+                    search_start = idx + 1
+                    continue
+
+            # 匹配成功
+            matched_positions |= positions
+            if wxid not in entities_by_wxid:
+                entities_by_wxid[wxid] = {"name": name, "profile": profile}
+            break
+
+    # 检索每个匹配人的相关群记忆
+    entities = []
+    mentionable_names = []
+    for wxid, info in entities_by_wxid.items():
+        entity = {"name": info["name"], "profile": info["profile"], "memories": []}
+        if group_memory and room_id:
+            keywords = [info["name"]]
+            pname = info["profile"].preferred_name
+            if pname and pname != info["name"]:
+                keywords.append(pname)
+            try:
+                entity["memories"] = group_memory.search(room_id, keywords, limit=2)
+            except Exception:
+                pass
+        entities.append(entity)
+        mentionable_names.append(info["profile"].preferred_name or info["name"])
+
+    return entities, mentionable_names
+
+
+def _is_latin_name(name: str) -> bool:
+    """名字是否包含拉丁字母（如 B L U E）"""
+    return any(c.isascii() and c.isalpha() for c in name)
+
+
+def _latin_word_boundary(content: str, idx: int, length: int) -> bool:
+    """检查拉丁名在 content[idx:idx+length] 是否有词边界。"""
+    if idx > 0:
+        prev = content[idx - 1]
+        if prev.isascii() and (prev.isalpha() or prev.isdigit()):
+            return False
+    end = idx + length
+    if end < len(content):
+        nxt = content[end]
+        if nxt.isascii() and (nxt.isalpha() or nxt.isdigit()):
+            return False
+    return True
 
 
 def auto_extract_facts(

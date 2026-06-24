@@ -81,39 +81,51 @@ class UiaSender:
 
     def send_text(self, contact: str, text: str, at_sender: str = "", at_mentions: list = None) -> bool:
         """
-        发送群聊消息，支持多人 @mention。
-        at_sender: 第一个 @的人（通常是发消息的人）
-        at_mentions: 额外要 @的人名列表（从 LLM 回复中提取）
+        发送群聊消息，支持内联 @mention。
+        at_sender: 回复对象（消息开头自动 @）
+        text: 消息正文，其中 @name 会被实时转换为真实 @mention
         """
-        # 合并并去重
-        all_mentions = []
-        seen = set()
-        for name in ([at_sender] if at_sender else []) + (at_mentions or []):
-            name = name.strip()
-            if name and name not in seen:
-                all_mentions.append(name)
-                seen.add(name)
-
         with self._lock:
             if not _focus_wechat():
                 log.error("WeChat window not found")
                 return False
             try:
-                # 依次 @每一个人
-                for name in all_mentions:
-                    self._at_mention(name)
+                # 1. 开头 @回复对象
+                if at_sender:
+                    self._at_mention(at_sender.strip())
                     time.sleep(0.3)
 
-                # 粘贴回复正文
-                import pyperclip
-                pyperclip.copy(text)
-                time.sleep(0.1)
-                _paste()                  # Ctrl+V
-                time.sleep(0.3)
-                _enter()                  # Enter 发送
+                # 2. 内联 @mention：按 @名字 切分，交替粘贴文字和 @人
+                import re as _re
+                # 匹配 @拉丁名（可含空格）或 @中文名（2-4字）
+                _pat = r'@([a-zA-Z][a-zA-Z0-9 ]*(?:\s+[a-zA-Z][a-zA-Z0-9 ]*)*|[一-鿿぀-ゟ가-힯]{2,4})'
 
-                at_info = f"@({','.join(all_mentions)})" if all_mentions else "no-at"
-                log.info("Sent: %s %s...", at_info, text[:40])
+                segments = _re.split(_pat, text)
+                # segments = [text0, name1, text1, name2, text2, ...]
+                # 偶数索引 = 纯文本，奇数索引 = 要 @ 的名字
+
+                inline_count = 0
+                for i, seg in enumerate(segments):
+                    if i % 2 == 0:
+                        # 纯文本段
+                        if seg.strip():
+                            import pyperclip
+                            pyperclip.copy(seg)
+                            time.sleep(0.05)
+                            _paste()
+                            time.sleep(0.3)
+                    else:
+                        # @mention 段 — 模拟键盘 @选人
+                        self._at_mention(seg)
+                        inline_count += 1
+                        time.sleep(0.3)
+
+                _enter()
+
+                at_info = f"@({at_sender})" if at_sender else "no-at"
+                if inline_count:
+                    at_info += f" +{inline_count} inline"
+                log.info("Sent: %s -> %s...", at_info, text[:60])
                 return True
             except Exception as e:
                 log.error("Send failed: %s", e)
