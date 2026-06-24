@@ -51,14 +51,15 @@ def _type_at():
 
 
 def _at_mention(name: str):
-    """模拟键盘 @选人。"""
+    """模拟键盘 @选人——不按 Enter，避免提前发送。靠空格+延时让微信自动选中。"""
     _type_at()
-    time.sleep(0.2)
+    time.sleep(0.3)
     pyperclip.copy(name)
-    time.sleep(0.05)
+    time.sleep(0.1)
     _paste()
-    time.sleep(0.5)
-    _enter()
+    time.sleep(0.8)  # 等微信下拉框弹出
+    _enter()          # 选中下拉框第一项
+    time.sleep(0.3)   # 等微信确认选中（关键：防止下个按键被误解释为发送）
 
 
 def _focus_wechat() -> bool:
@@ -98,7 +99,7 @@ def send(reply: DecodedReply, room_id: str, at_sender: str) -> bool:
             # 1. 开头 @回复对象
             if at_sender:
                 _at_mention(at_sender.strip())
-                time.sleep(0.3)
+                time.sleep(0.5)  # 等 @mention 稳定
 
             # 2. 内联 @mention
             text = reply.clean_text
@@ -110,14 +111,16 @@ def send(reply: DecodedReply, room_id: str, at_sender: str) -> bool:
                 if i % 2 == 0:
                     if seg.strip():
                         pyperclip.copy(seg)
-                        time.sleep(0.05)
+                        time.sleep(0.1)
                         _paste()
-                        time.sleep(0.3)
+                        time.sleep(0.5)  # 延长等微信消化
                 else:
                     _at_mention(seg)
                     inline_count += 1
-                    time.sleep(0.3)
+                    time.sleep(0.5)  # 延长等 @mention 稳定
 
+            # 所有内容拼接完毕，一次性发送
+            time.sleep(0.3)
             _enter()
 
             at_info = f"@({at_sender})" if at_sender else "no-at"
