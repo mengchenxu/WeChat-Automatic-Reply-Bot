@@ -47,6 +47,9 @@ def decode(raw_reply: str, enriched: EnrichedCtx, store: Store) -> DecodedReply:
     at_mentions: List[str] = []
     sender_name = enriched.parsed.sender_name or ""
 
+    # 0. 先处理 @wxid_xxx 模式（正则匹配不到下划线，用 wxid 直接查找）
+    text = _resolve_wxid_mentions(text, store, at_mentions)
+
     # 匹配拉丁名 + 中文名
     latin = re.findall(r'@([a-zA-Z][a-zA-Z0-9 ]*(?:\s+[a-zA-Z][a-zA-Z0-9 ]*)*)', text)
     cjk = re.findall(r'@([一-鿿぀-ゟ가-힯]{2,4})', text)
@@ -115,6 +118,24 @@ def _extract_context(text: str, enriched: EnrichedCtx) -> tuple[str, str | None]
     clean = re.sub(pattern, _replacer, text)
     clean = re.sub(r'\n{3,}', '\n\n', clean)
     return clean.strip(), context_text
+
+
+def _resolve_wxid_mentions(text: str, store, at_mentions: List[str]) -> str:
+    """处理 @wxid_xxx 模式：直接按 wxid 查找 Person，替换为 mention_name。"""
+    import re as _re
+    pattern = _re.compile(r'@(wxid_[a-zA-Z0-9_]+)')
+
+    def _replacer(m):
+        wxid = m.group(1)
+        person = store.get_person(wxid)
+        if person and person.mention_name:
+            if person.mention_name not in at_mentions:
+                at_mentions.append(person.mention_name)
+            return f"@{person.mention_name}"
+        # 找不到则去掉 wxid mention（不能让它出现在正文）
+        return ""
+
+    return pattern.sub(_replacer, text)
 
 
 def _apply_remember(person, key: str, value: str, mutations: dict):

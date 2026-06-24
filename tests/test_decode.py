@@ -70,6 +70,29 @@ def test_decode_extracts_context_update():
     assert "123@chatroom" in result.mutations.get("update_summary", {})
 
 
+def test_decode_never_leaks_wxid_in_reply():
+    """bug: LLM写了@wxid_xxx，正则匹配不完整导致wxid碎片留在正文。"""
+    store = Store()
+    p = store.get_or_create_person("wxid_o1nbmvbfmktu22", "子南")
+    p.mention_name = "子南"  # mention_name 已正确设置
+    store.get_group("123@chatroom")
+
+    parsed = ParsedMsg(
+        room_id="123@chatroom", sender_wxid="wxid_x", sender_name="贯一",
+        content="test", raw_mentions=[], is_at_bot=True,
+    )
+    enriched = EnrichedCtx(parsed=parsed, history=[])
+
+    # 模拟 LLM 可能写出 wxid（因为上下文里看到了）
+    raw = "@wxid_o1nbmvbfmktu22 你那个番号找到了吗"
+    result = decode(raw, enriched, store)
+    # 关键是：_o1nbmvbfmktu22 不能泄露到正文
+    assert "_o1nbmvbfmktu22" not in result.clean_text
+    assert "wxid_o1nbmvbfmktu22" not in result.clean_text
+    # 应该正确识别并替换为用户可读名
+    assert "子南" in result.at_mentions or result.clean_text == "你那个番号找到了吗"
+
+
 def test_decode_correction_signal():
     store = Store()
     p = store.get_or_create_person("wxid_a", "贯一")
