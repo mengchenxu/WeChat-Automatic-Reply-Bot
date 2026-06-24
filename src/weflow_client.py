@@ -173,6 +173,60 @@ class WeFlowClient:
         threading.Thread(target=self._poll_loop, daemon=True, name="weflow-poll").start()
         logger.info("WeFlow REST polling started")
 
+    def load_recent_messages(self, handler, count: int = 20):
+        """启动时加载每个群的最近 N 条消息，静默记录到历史（不触发回复）。
+        handler: 只调 bot.handle() 记录消息，不走 LLM。"""
+        sessions = self._api_get("/api/v1/sessions")
+        if not sessions:
+            logger.warning("load_recent_messages: 无法获取 sessions")
+            return
+
+        total = 0
+        for sess in sessions.get("sessions", []):
+            talker = sess.get("username", "")
+            stype = sess.get("sessionType", "")
+            if stype != "group" and "@chatroom" not in talker:
+                continue
+            sname = sess.get("displayName", "")
+
+            resp = self._api_get(f"/api/v1/messages?talker={talker}&media=false")
+            if not resp:
+                continue
+
+            messages = resp.get("messages", [])
+            if not messages:
+                continue
+
+            # 按时间升序排列（旧→新），取最近 count 条
+            recent = sorted(messages, key=lambda m: m.get("createTime", 0))[-count:]
+
+            for mdata in recent:
+                msg = WeFlowMessage(mdata, session_type=stype, session_name=sname)
+                msg.session_id = talker
+                if not msg.content.strip():
+                    continue
+                # 过滤自己的消息
+                if msg.sender_name == self.bot_wxid or msg.sender_name in self.bot_nicknames:
+                    continue
+
+                # 加入 seen_ids 防止后续轮询重复处理
+                self._seen_ids.add(msg.rawid)
+
+                # 静默记录到历史（handler 只调 bot.handle，不触发回复）
+                try:
+                    handler(msg)
+                    total += 1
+                except Exception:
+                    logger.exception("load_recent_messages: handler 异常")
+
+            logger.info("load_recent_messages: group=%s loaded=%d",
+                        talker[:20], len(recent))
+
+        # 更新启动时间戳到最新消息之后，避免轮询重处理
+        if total > 0:
+            self._start_ts = int(time.time()) + 10
+        logger.info("load_recent_messages: total=%d messages loaded into history", total)
+
     def start_periodic_sync(self, user_memory, interval_sec: int = 1800):
         """每 interval_sec 秒刷新 name_cache 并同步新群成员到 user_memory。"""
         def _sync_loop():

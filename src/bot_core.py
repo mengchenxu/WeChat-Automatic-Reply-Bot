@@ -116,18 +116,8 @@ class BotCore:
         if is_at_bot and content.startswith("/"):
             return self._handle_command(content, roomid, msg)
 
-        # ---- 6. 非 @ 不回复 ----
-        if not is_at_bot:
-            return None
-
-        # ---- 7. 冷却检查 ----
-        elapsed = time.time() - session.last_reply_at
-        if elapsed < self.cooldown:
-            logger.debug("群 %s 回复冷却中 (%.1fs < %ds)", roomid, elapsed, self.cooldown)
-            return None
-
-        # ---- 8. 添加用户消息到历史（带发送者信息） ----
-        clean = self._clean_at_text(msg)
+        # ---- 6. 添加消息到历史（@和非@ 都记录，bot 需要知道上下文） ----
+        clean = self._clean_at_text(msg) if is_at_bot else content
         chat_msg = ChatMessage(
             role="user",
             content=clean,
@@ -136,6 +126,16 @@ class BotCore:
             timestamp=time.time(),
         )
         session.history.append(chat_msg)
+
+        # ---- 7. 非 @ 不回复（但已记录到历史） ----
+        if not is_at_bot:
+            return None
+
+        # ---- 8. 冷却检查 ----
+        elapsed = time.time() - session.last_reply_at
+        if elapsed < self.cooldown:
+            logger.debug("群 %s 回复冷却中 (%.1fs < %ds)", roomid, elapsed, self.cooldown)
+            return None
         session.last_reply_at = time.time()
 
         # 返回 None 表示需要 LLM 处理（调用方负责）

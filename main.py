@@ -81,6 +81,13 @@ def main():
     bot = BotCore(config, client, user_memory=user_memory,
                   style_observer=style_observer, data_dir="data")
 
+    # ---- 启动时加载最近群消息到历史（静默，不触发回复） ----
+    def _silent_load(msg: WeFlowMessage):
+        """只记录消息到历史/统计/风格，不走 LLM 回复。"""
+        bot.handle(msg)
+
+    client.load_recent_messages(_silent_load, count=20)
+
     # 主动发言系统
     speaker = ProactiveSpeaker(config, llm, client, group_memory, user_memory)
     logger.info("Proactive speaker: %s", "enabled" if config.proactive.enabled else "disabled")
