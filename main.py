@@ -190,9 +190,11 @@ def main():
                     logger.warning("Unresolved mention discarded: '%s'", name)
                     continue
 
-            # 替换文本中的 @LLM名 → @真实名（确保 UIA 能选对人）
+            # 替换文本中的 @LLM名 → @真实名（但别用 wxid 覆盖人类可读的名字）
             if real_name and real_name != name:
-                inline_reply = inline_reply.replace(f'@{name}', f'@{real_name}')
+                # 如果解析结果是 wxid，LLM 写的名字更好（群里的人认的是名字不是 wxid）
+                if not (real_name.startswith("wxid_") or real_name.startswith("wxid-")):
+                    inline_reply = inline_reply.replace(f'@{name}', f'@{real_name}')
 
         # 去掉 LLM 可能在开头写的 @发送者（由 at_sender 自动处理，避免重复）
         if sender_display:
