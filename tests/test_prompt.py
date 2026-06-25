@@ -146,7 +146,7 @@ def test_extraction_prompt_includes_messages():
 
 
 def test_extraction_prompt_requests_json_output():
-    """prompt 要求 JSON 输出"""
+    """prompt 要求 JSON 数组输出，包含 facts 字段"""
     msgs = [ChatMsg(role="user", content="hello", sender_name="test")]
     result = build_extraction_prompt(msgs)
     user_msg = result[1]["content"]
@@ -154,6 +154,7 @@ def test_extraction_prompt_requests_json_output():
     assert "category" in user_msg
     assert "participants" in user_msg
     assert "importance" in user_msg
+    assert "facts" in user_msg
 
 
 def test_extraction_prompt_max_3():
@@ -161,7 +162,7 @@ def test_extraction_prompt_max_3():
     msgs = [ChatMsg(role="user", content="hello", sender_name="test")]
     result = build_extraction_prompt(msgs)
     user_msg = result[1]["content"]
-    assert "最多 3 条" in user_msg
+    assert "最多 3" in user_msg
 
 
 def test_extraction_prompt_limits_15():

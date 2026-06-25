@@ -188,13 +188,21 @@ class Pipeline:
                                           category=category, importance=importance)
                     added += 1
 
-                    # 为 participants 中的人提取事实
-                    for name in participants:
+                    # 提取原子 facts（LLM 在 item["facts"] 中提供，最多 2 条）
+                    for fact in item.get("facts", [])[:2]:
+                        if facts_added >= 2:
+                            break
+                        name = fact.get("person", "")
+                        key = fact.get("key", "")
+                        value = fact.get("value", "")
+                        if not name or not key or not value:
+                            continue
                         person, _ = self.store.resolve_name(name)
-                        if person:
-                            key = f"从记忆: {content[:30]}"
-                            if person.add_fact(key, content, source="llm_extract", confidence=0.6):
-                                facts_added += 1
+                        if person and person.add_fact(key, value, source="llm_extract", confidence=0.6):
+                            facts_added += 1
+
+                # 定期清理低价值旧记忆
+                self.store.cleanup_old_memories(room_id)
 
                 if added:
                     logger.info("Memory extraction: %d memories, %d facts (room=%s)",

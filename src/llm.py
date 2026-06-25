@@ -148,8 +148,8 @@ class LLMClient:
             return ""
 
 
-    def extract_memories(self, recent_messages: list) -> list:
-        """从最近消息中提取结构化记忆。返回 [dict]，失败返回 []。"""
+    def extract_memories(self, recent_messages: list) -> list[dict]:
+        """从最近消息中提取结构化记忆 + facts。返回 [dict]，失败返回 []。"""
         try:
             from src.prompt import build_extraction_prompt
             messages = build_extraction_prompt(recent_messages)
@@ -170,7 +170,11 @@ class LLMClient:
             items = json.loads(text)
             if not isinstance(items, list):
                 return []
-            return items[:3]  # 最多 3 条
+            # 校验每条的结构
+            for item in items:
+                if not isinstance(item, dict) or "content" not in item:
+                    return []
+            return items[:3]
         except Exception:
             logger.exception("记忆提取 LLM 调用失败")
             return []

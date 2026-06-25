@@ -210,6 +210,11 @@ class Store:
             for alias in p.aliases:
                 if nl == alias.lower():
                     return p
+        # 匹配 relations 中的 wxid/标签
+        for p in self._people.values():
+            for rel_wxid, rel_label in p.relations.items():
+                if nl == rel_wxid.lower() or nl == rel_label.lower() or nl in rel_label.lower():
+                    return p
         for p in self._people.values():
             if p.mention_name and (nl in p.mention_name.lower() or nl in p.mention_name.lower().replace(" ", "")):
                 if self._is_latin_word(p.mention_name, nl, name):
@@ -300,6 +305,22 @@ class Store:
         g = self.get_group(room_id)
         g.context = summary
 
+    def cleanup_old_memories(self, room_id: str, max_age_days: int = 30):
+        """清理超过 max_age_days 天且重要度 ≤ 2 的记忆。"""
+        if room_id not in self._groups:
+            return
+        g = self._groups[room_id]
+        now = time.time()
+        cutoff = now - max_age_days * 86400
+        before = len(g.memories)
+        g.memories = [
+            m for m in g.memories
+            if not (m.timestamp < cutoff and m.importance <= 2)
+        ]
+        removed = before - len(g.memories)
+        if removed:
+            logger.info("Cleaned up %d old memories (room=%s)", removed, room_id[:20])
+
     # -- 批量变更 --
     def apply_mutations(self, mutations: dict):
         for wxid, facts in mutations.get("add_facts", {}).items():
@@ -359,7 +380,8 @@ class Store:
                      "sender_wxid": h.sender_wxid, "timestamp": h.timestamp}
                     for h in g.history[-20:]
                 ],
-                "last_msg_at": g.last_msg_at, "msg_count": g.msg_count,
+                "last_msg_at": g.last_msg_at, "last_reply_at": g.last_reply_at,
+                "msg_count": g.msg_count,
             }
 
         return {"meta": self._meta, "people": people, "groups": groups}
@@ -422,6 +444,7 @@ class Store:
                 room_id=rid, name=d.get("name", ""),
                 context=d.get("context", ""), topic=d.get("topic", ""),
                 last_msg_at=d.get("last_msg_at", 0.0),
+                last_reply_at=d.get("last_reply_at", 0.0),
                 msg_count=d.get("msg_count", 0),
             )
             for md in d.get("memories", []):

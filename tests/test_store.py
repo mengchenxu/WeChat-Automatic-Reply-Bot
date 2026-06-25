@@ -1,6 +1,7 @@
 """Store 数据层测试 — 24 个测试覆盖 Person, Group, Memory, ChatMsg, Store CRUD, JSON save/load, 名字解析, 历史管理"""
 import json
 import os
+import time
 
 import pytest
 from src.store import Store, Person, Group, ChatMsg, GroupMemory, FactEntry
@@ -492,6 +493,7 @@ def test_pipeline_extract_memories_adds_to_store():
             "keywords": ["日本", "婚礼"],
             "participants": ["user1"],
             "importance": 4,
+            "facts": [{"person": "user1", "key": "行程", "value": "下周去日本"}],
         },
         {
             "content": "群里决定周五聚餐",
@@ -499,6 +501,7 @@ def test_pipeline_extract_memories_adds_to_store():
             "keywords": ["聚餐", "周五"],
             "participants": ["user1", "user2"],
             "importance": 5,
+            "facts": [],
         },
     ])
 
@@ -523,9 +526,11 @@ def test_pipeline_extract_memories_adds_to_store():
     assert "日本" in g2.memories[0].keywords
     assert g2.memories[1].importance == 5
 
-    # 事实已提取到 participants
+    # 事实已提取（LLM 提供的原子 facts）
     p = store.get_or_create_person("__placeholder__user1", "user1")
     assert len(p.facts) >= 1
+    assert p.facts[0].key == "行程"
+    assert p.facts[0].value == "下周去日本"
 
 
 def test_pipeline_extract_memories_empty_llm_response():
@@ -613,7 +618,7 @@ def test_pipeline_extract_triggers_only_every_n():
             role="user", content=f"msg{i}", sender_name=f"user{i}",
         ))
 
-    fake_llm = FakeLLM(items=[{"content": "test", "category": "fact", "keywords": [], "participants": [], "importance": 3}])
+    fake_llm = FakeLLM(items=[{"content": "test", "category": "fact", "keywords": [], "participants": [], "importance": 3, "facts": []}])
     pipeline = Pipeline.__new__(Pipeline)
     pipeline.store = store
     pipeline.llm = fake_llm
@@ -630,3 +635,78 @@ def test_pipeline_extract_triggers_only_every_n():
     # 没有触发
     assert not fake_llm._called
     assert len(store.get_group("123@chatroom").memories) == 0
+
+
+# ============================================================
+# 新功能测试：cleanup / last_reply_at / relations 匹配
+# ============================================================
+def test_cleanup_old_memories():
+    """重要度 ≤2 且超过 30 天的记忆被清理"""
+    store = Store()
+    g = store.get_group("123@chatroom")
+
+    # 旧记忆（31 天前，重要度 1）
+    old_mem = GroupMemory(
+        id="old1", text="过时信息", category="fact",
+        importance=1, timestamp=time.time() - 31 * 86400,
+    )
+    g.memories.append(old_mem)
+
+    # 重要记忆不应被清理
+    important_mem = GroupMemory(
+        id="imp1", text="重要决定", category="decision",
+        importance=4, timestamp=time.time() - 31 * 86400,
+    )
+    g.memories.append(important_mem)
+
+    # 新记忆不应被清理
+    recent_mem = GroupMemory(
+        id="new1", text="今天的事", category="event",
+        importance=1, timestamp=time.time(),
+    )
+    g.memories.append(recent_mem)
+
+    store.cleanup_old_memories("123@chatroom")
+    g2 = store.get_group("123@chatroom")
+    texts = [m.text for m in g2.memories]
+    assert "过时信息" not in texts
+    assert "重要决定" in texts
+    assert "今天的事" in texts
+
+
+def test_last_reply_at_roundtrip(tmp_path):
+    """last_reply_at 在 save/load 后保持"""
+    store = Store()
+    g = store.get_group("123@chatroom")
+    g.last_reply_at = 1234567890.5
+
+    path = str(tmp_path / "store.json")
+    store.save(path)
+
+    store2 = Store.load(path)
+    g2 = store2.get_group("123@chatroom")
+    assert g2.last_reply_at == 1234567890.5
+
+
+def test_find_person_by_relation():
+    """find_person_by_name 匹配 relations 中的 wxid 和标签"""
+    store = Store()
+    p = store.get_or_create_person("wxid_a", "子南")
+    p.relations["wxid_b"] = "同事"
+
+    # 按关系标签匹配
+    assert store.find_person_by_name("同事") is p
+    # 按关系 wxid 匹配
+    assert store.find_person_by_name("wxid_b") is p
+
+
+def test_extraction_prompt_json_array():
+    """build_extraction_prompt 要求返回 JSON 数组，不是单行 JSON"""
+    from src.prompt import build_extraction_prompt
+    msgs = [ChatMsg(role="user", content="hello", sender_name="test")]
+    result = build_extraction_prompt(msgs)
+    user_msg = result[1]["content"]
+    assert "[" in user_msg
+    assert "facts" in user_msg  # 新格式包含 facts 字段
+    # 不应该说"一行 JSON"
+    assert "一行 JSON" not in user_msg
