@@ -74,6 +74,29 @@ def decode(raw_reply: str, enriched: EnrichedCtx, store: Store) -> DecodedReply:
     if sender_name:
         clean = re.sub(rf'^@?\s*{re.escape(sender_name)}\s*[,，]?\s*', '', clean).strip()
 
+    # --- 兜底：清除所有未解析为人类可读名的 @mention ---
+    # 任何 @xxx 如果不在 at_mentions 中，从 clean_text 中移除
+    all_known = set(at_mentions)
+    if sender_name:
+        all_known.add(sender_name)
+
+    def _strip_unresolved(m: re.Match) -> str:
+        name = m.group(0)[1:]  # 去掉 @
+        # 如果已被解析为已知名字 → 保留
+        if name.strip() in all_known:
+            return m.group(0)
+        # wxid 形式 → 移除
+        if re.match(r'^(wxid_|[a-z][a-z0-9_]{5,})$', name.strip()):
+            return ""
+        # 查不到 → 移除
+        person2, _ = store.resolve_name(name.strip())
+        if person2 and person2.mention_name:
+            return m.group(0)
+        return ""
+
+    clean = re.sub(r'@\S+', _strip_unresolved, clean)
+    clean = re.sub(r'\s{2,}', ' ', clean).strip()
+
     return DecodedReply(clean_text=clean, at_mentions=at_mentions, mutations=mutations)
 
 
@@ -121,9 +144,11 @@ def _extract_context(text: str, enriched: EnrichedCtx) -> tuple[str, str | None]
 
 
 def _resolve_wxid_mentions(text: str, store, at_mentions: List[str]) -> str:
-    """处理 @wxid_xxx 模式：直接按 wxid 查找 Person，替换为 mention_name。"""
+    """处理 @wxid 模式：wxid_ 前缀 + 无前缀小写数字型 wxid → 替换为 mention_name 或移除。"""
     import re as _re
-    pattern = _re.compile(r'@(wxid_[a-zA-Z0-9_]+)')
+    # 模式1: wxid_ 前缀
+    # 模式2: 无前缀 wxid（小写字母开头 + 数字，无大写，长度 ≥ 8）
+    pattern = _re.compile(r'@((?:wxid_[a-zA-Z0-9_]+)|(?:[a-z][a-z0-9_]{6,}))')
 
     def _replacer(m):
         wxid = m.group(1)
@@ -132,7 +157,7 @@ def _resolve_wxid_mentions(text: str, store, at_mentions: List[str]) -> str:
             if person.mention_name not in at_mentions:
                 at_mentions.append(person.mention_name)
             return f"@{person.mention_name}"
-        # 找不到则去掉 wxid mention（不能让它出现在正文）
+        # 找不到则去掉（不能让它出现在正文）
         return ""
 
     return pattern.sub(_replacer, text)

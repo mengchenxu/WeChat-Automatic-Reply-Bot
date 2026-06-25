@@ -111,3 +111,24 @@ def test_decode_correction_signal():
     # 应该触发纠正
     corrections = result.mutations.get("correct_facts", {})
     assert "wxid_a" in corrections or len(corrections) > 0
+
+
+def test_decode_strips_unprefixed_wxid():
+    """bug: LLM 写了 @xiaoleilei169816（无 wxid_ 前缀），原文残留 wxid。"""
+    store = Store()
+    store.get_group("123@chatroom")
+
+    parsed = ParsedMsg(
+        room_id="123@chatroom", sender_wxid="wxid_x", sender_name="大号",
+        content="test", raw_mentions=[], is_at_bot=True,
+    )
+    enriched = EnrichedCtx(parsed=parsed, history=[])
+
+    raw = "@xiaoleilei169816 你那个亲嘴直播还搞不搞了"
+    result = decode(raw, enriched, store)
+    # wxid 绝对不能出现在 clean_text
+    assert "xiaoleilei169816" not in result.clean_text
+    # @ 符号后面的 wxid 也不能出现
+    assert "@xiaoleilei169816" not in result.clean_text
+    # 正文保留
+    assert "亲嘴直播" in result.clean_text
