@@ -8,8 +8,8 @@ __pycache__/
 dist/
 build/
 
-# 配置文件（含密钥，不提交）
-config/config.yaml
+# 密钥文件（不提交）
+.env
 
 # 日志
 logs/

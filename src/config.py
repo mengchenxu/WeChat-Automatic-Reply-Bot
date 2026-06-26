@@ -1,7 +1,26 @@
-"""配置加载 — 从 config.yaml 读取并返回结构化配置"""
+"""配置加载 — 从 config.yaml + .env 读取并返回结构化配置"""
 import os
 from dataclasses import dataclass, field
+
 import yaml
+
+
+def _load_dotenv(dotenv_path: str = ".env") -> dict[str, str]:
+    """从 .env 文件读取键值对（简易版，不依赖 python-dotenv）。"""
+    result: dict[str, str] = {}
+    if not os.path.exists(dotenv_path):
+        return result
+    with open(dotenv_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key:
+                result[key] = value
+    return result
 
 
 @dataclass
@@ -30,7 +49,9 @@ class AppConfig:
 
 
 def load_config(path: str = "config/config.yaml") -> AppConfig:
-    """从 YAML 文件加载配置。"""
+    """从 YAML + .env 加载配置。.env 的 api_key 优先于 YAML 中的。"""
+    dotenv = _load_dotenv()
+
     if not os.path.exists(path):
         return AppConfig()
 
@@ -40,9 +61,11 @@ def load_config(path: str = "config/config.yaml") -> AppConfig:
     config = AppConfig()
 
     llm_raw = raw.get("llm", {})
+    # api_key: .env > config.yaml > ""
+    api_key = dotenv.get("DEEPSEEK_API_KEY") or llm_raw.get("api_key") or ""
     config.llm = LLMConfig(
         provider=llm_raw.get("provider", "deepseek"),
-        api_key=llm_raw.get("api_key", ""),
+        api_key=api_key,
         base_url=llm_raw.get("base_url", "https://api.deepseek.com"),
         model=llm_raw.get("model", "deepseek-chat"),
         max_tokens=llm_raw.get("max_tokens", 2048),
