@@ -103,7 +103,8 @@ def send(reply: DecodedReply, room_id: str, at_sender: str) -> bool:
 
             # 2. 内联 @mention
             text = reply.clean_text
-            pattern = r'@([a-zA-Z][a-zA-Z0-9 ._&\-]*(?:\s+[a-zA-Z][a-zA-Z0-9 ._&\-]*)*|[一-鿿぀-ゟ가-힯]{1,15})'
+            # 拉丁/数字/重音符 开头（可含空格多段）| CJK 开头（可混拉丁数字，不含空格）
+            pattern = r'@([a-zA-Z0-9À-ÿ][a-zA-Z0-9 ._&\-À-ÿ]*(?:\s+[a-zA-Z0-9À-ÿ][a-zA-Z0-9 ._&\-À-ÿ]*)*|[一-鿿぀-ゟ가-힯][一-鿿぀-ゟ가-힯a-zA-Z0-9._&\-À-ÿ]{0,14})'
             segments = re.split(pattern, text)
 
             inline_count = 0

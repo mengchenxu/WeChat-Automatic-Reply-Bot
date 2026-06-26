@@ -153,19 +153,21 @@ def test_decode_long_cjk_name():
 
 
 def test_send_regex_captures_full_name():
-    """验证修复后：CJK 5字名 + 拉丁名含 & 都能完整匹配。"""
+    """验证修复后：CJK 5字 + & + 数字开头 + 重音符 + CJK拉丁混合 全匹配。"""
     import re
-    # 修复后的 send.py 正则
-    pattern = r'@([a-zA-Z][a-zA-Z0-9 ._&\-]*(?:\s+[a-zA-Z][a-zA-Z0-9 ._&\-]*)*|[一-鿿぀-ゟ가-힯]{1,15})'
+    pattern = r'@([a-zA-Z0-9À-ÿ][a-zA-Z0-9 ._&\-À-ÿ]*(?:\s+[a-zA-Z0-9À-ÿ][a-zA-Z0-9 ._&\-À-ÿ]*)*|[一-鿿぀-ゟ가-힯][一-鿿぀-ゟ가-힯a-zA-Z0-9._&\-À-ÿ]{0,14})'
 
-    segments = re.split(pattern, "@孟辰旭宝宝 你好")
-    mention = segments[1] if len(segments) > 1 else ""
-    assert mention == "孟辰旭宝宝", f"CJK 5字完整: {repr(mention)}"
-
-    segments2 = re.split(pattern, "@Cheng&Nanikaii 在吗")
-    mention2 = (segments2[1] or "").strip() if len(segments2) > 1 else ""
-    assert mention2 == "Cheng&Nanikaii", f"拉丁 & 完整: {repr(mention2)}"
-
-    segments3 = re.split(pattern, "@B L U E 来了")
-    mention3 = (segments3[1] or "").strip() if len(segments3) > 1 else ""
-    assert mention3 == "B L U E", f"空格分隔名完整: {repr(mention3)}"
+    cases = [
+        ("@孟辰旭宝宝 你好", "孟辰旭宝宝", "CJK 5字"),
+        ("@Cheng&Nanikaii 在吗", "Cheng&Nanikaii", "拉丁 &"),
+        ("@B L U E 来了", "B L U E", "空格名"),
+        ("@123name 嗯", "123name", "数字开头"),
+        ("@Café 你好", "Café", "重音符"),
+        ("@小明abc 在干嘛", "小明abc", "CJK+拉丁混合"),
+        ("@test.user 哈", "test.user", "点号"),
+        ("@a-b-c 嘿", "a-b-c", "连字符"),
+    ]
+    for text, expected, desc in cases:
+        segments = re.split(pattern, text)
+        mention = (segments[1] or "").strip() if len(segments) > 1 else ""
+        assert mention == expected, f"{desc}: 期望 {repr(expected)} 实际 {repr(mention)}"
