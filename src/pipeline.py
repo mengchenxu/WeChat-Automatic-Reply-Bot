@@ -96,8 +96,9 @@ class Pipeline:
         if not self._running:
             return None
 
-        # Phase 1: Parse
-        parsed = parse(msg_data, self.bot_names)
+        # Phase 1: Parse（传入 bot wxid 用于过滤自己的消息）
+        bot_wxid = self.weflow.bot_wxid if self.weflow.bot_wxid else ""
+        parsed = parse(msg_data, self.bot_names, bot_wxids=[bot_wxid] if bot_wxid else [])
         if parsed is None:
             return None  # 私聊，跳过
 

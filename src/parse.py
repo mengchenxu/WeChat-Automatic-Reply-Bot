@@ -41,7 +41,7 @@ def _extract_mentions(raw_content: str, content: str) -> List[str]:
     return mentions
 
 
-def parse(msg, bot_names: List[str]) -> Optional[ParsedMsg]:
+def parse(msg, bot_names: List[str], bot_wxids: List[str] = None) -> Optional[ParsedMsg]:
     """将 WeFlowMessage 或原始 dict 解析为 ParsedMsg。私聊返回 None。"""
     # 兼容 WeFlowMessage 对象和原始 dict
     if hasattr(msg, 'session_id'):
@@ -78,7 +78,10 @@ def parse(msg, bot_names: List[str]) -> Optional[ParsedMsg]:
         text = re.sub(rf'@{re.escape(name)}\s*', '', text).strip()
 
     # 过滤 bot 自己的消息（防止主动发言被回收后自我回复）
+    # 三路检查：显示名、昵称、wxid
     if sender_name in bot_names or sender in bot_names:
+        return None
+    if bot_wxids and (sender in bot_wxids or sender_name in bot_wxids):
         return None
 
     # 命令检测

@@ -96,6 +96,13 @@ class WeFlowClient:
         self.bot_nicknames = nicknames
         self.bot_wxid = wxid
         self._build_name_cache()
+        # 自动发现 bot 的 wxid（从联系人列表中匹配昵称）
+        if not self.bot_wxid and self.bot_nicknames:
+            for cached_wxid, cached_name in self._name_cache.items():
+                if cached_name in self.bot_nicknames:
+                    self.bot_wxid = cached_wxid
+                    logger.info("Auto-detected bot wxid: %s -> %s", cached_wxid, cached_name)
+                    break
 
     def _build_name_cache(self):
         """从联系人 API 构建 wxid → 显示名 映射。"""
