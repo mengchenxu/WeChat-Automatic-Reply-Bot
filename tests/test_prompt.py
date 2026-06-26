@@ -93,21 +93,22 @@ def test_build_prompt_truncates_history_to_10():
     assert "msg4" not in user_msg  # 超出 10 条
 
 
-def test_mixianshan_prompt_identity():
-    """验证新 system_prompt 包含米线山人设关键元素。"""
+def test_catgirl_prompt_identity():
+    """验证新 system_prompt 包含猫娘人设关键元素。"""
     from src.config import load_config
     config = load_config()
     sp = config.bot.system_prompt
-    assert "米线山" in sp
-    assert "2-5 句话" in sp
-    assert "严禁拆成多段" in sp
-    assert "损友" in sp
-    assert "串子" in sp
-    # 旧 prompt 元素必须清理（新 prompt 中作为"不要用"的说明可以出现）
+    assert "猫娘" in sp or "小猫咪" in sp
+    assert "喵" in sp
+    assert "主人" in sp
+    assert "人家" in sp
+    # 旧人设元素必须清理
+    assert "米线山" not in sp
+    assert "串子" not in sp
     assert "孙笑川" not in sp
     assert "孙吧" not in sp
     assert "嘴臭" not in sp
-    assert "骂完就跑" not in sp
+    assert "贵物" not in sp
 
 
 def test_build_prompt_none_sender_name():
