@@ -103,7 +103,7 @@ def send(reply: DecodedReply, room_id: str, at_sender: str) -> bool:
 
             # 2. 内联 @mention
             text = reply.clean_text
-            pattern = r'@([a-zA-Z][a-zA-Z0-9 ]*(?:\s+[a-zA-Z][a-zA-Z0-9 ]*)*|[一-鿿぀-ゟ가-힯]{2,4})'
+            pattern = r'@([a-zA-Z][a-zA-Z0-9 ._&\-]*(?:\s+[a-zA-Z][a-zA-Z0-9 ._&\-]*)*|[一-鿿぀-ゟ가-힯]{1,15})'
             segments = re.split(pattern, text)
 
             inline_count = 0
@@ -115,7 +115,7 @@ def send(reply: DecodedReply, room_id: str, at_sender: str) -> bool:
                         _paste()
                         time.sleep(0.5)  # 延长等微信消化
                 else:
-                    _at_mention(seg)
+                    _at_mention(seg.strip())
                     inline_count += 1
                     time.sleep(0.5)  # 延长等 @mention 稳定
 

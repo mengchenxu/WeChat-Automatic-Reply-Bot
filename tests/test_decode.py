@@ -132,3 +132,40 @@ def test_decode_strips_unprefixed_wxid():
     assert "@xiaoleilei169816" not in result.clean_text
     # 正文保留
     assert "亲嘴直播" in result.clean_text
+
+
+def test_decode_long_cjk_name():
+    """bug: CJK 名字 >4 字时，正则只匹配前 4 字，余字泄露为普通文本。"""
+    store = Store()
+    p = store.get_or_create_person("wxid_a", "孟辰旭宝宝")
+    store.get_group("123@chatroom")
+
+    parsed = ParsedMsg(
+        room_id="123@chatroom", sender_wxid="wxid_x", sender_name="大号",
+        content="test", raw_mentions=[], is_at_bot=True,
+    )
+    enriched = EnrichedCtx(parsed=parsed, history=[])
+
+    raw = "@孟辰旭宝宝 你那个剧本对好了没有"
+    result = decode(raw, enriched, store)
+    # 完整的名字应该在 at_mentions 中（不被截断）
+    assert "孟辰旭宝宝" in result.at_mentions
+
+
+def test_send_regex_captures_full_name():
+    """验证修复后：CJK 5字名 + 拉丁名含 & 都能完整匹配。"""
+    import re
+    # 修复后的 send.py 正则
+    pattern = r'@([a-zA-Z][a-zA-Z0-9 ._&\-]*(?:\s+[a-zA-Z][a-zA-Z0-9 ._&\-]*)*|[一-鿿぀-ゟ가-힯]{1,15})'
+
+    segments = re.split(pattern, "@孟辰旭宝宝 你好")
+    mention = segments[1] if len(segments) > 1 else ""
+    assert mention == "孟辰旭宝宝", f"CJK 5字完整: {repr(mention)}"
+
+    segments2 = re.split(pattern, "@Cheng&Nanikaii 在吗")
+    mention2 = (segments2[1] or "").strip() if len(segments2) > 1 else ""
+    assert mention2 == "Cheng&Nanikaii", f"拉丁 & 完整: {repr(mention2)}"
+
+    segments3 = re.split(pattern, "@B L U E 来了")
+    mention3 = (segments3[1] or "").strip() if len(segments3) > 1 else ""
+    assert mention3 == "B L U E", f"空格分隔名完整: {repr(mention3)}"

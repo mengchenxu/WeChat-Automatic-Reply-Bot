@@ -51,8 +51,8 @@ def decode(raw_reply: str, enriched: EnrichedCtx, store: Store) -> DecodedReply:
     text = _resolve_wxid_mentions(text, store, at_mentions)
 
     # 匹配拉丁名 + 中文名
-    latin = re.findall(r'@([a-zA-Z][a-zA-Z0-9 ]*(?:\s+[a-zA-Z][a-zA-Z0-9 ]*)*)', text)
-    cjk = re.findall(r'@([一-鿿぀-ゟ가-힯]{2,4})', text)
+    latin = re.findall(r'@([a-zA-Z][a-zA-Z0-9 ._&\-]*(?:\s+[a-zA-Z][a-zA-Z0-9 ._&\-]*)*)', text)
+    cjk = re.findall(r'@([一-鿿぀-ゟ가-힯]{1,15})', text)
     all_names = list(set(latin + cjk))
 
     for name in all_names:
