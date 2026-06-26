@@ -91,3 +91,15 @@ def test_parse_real_weflow_message():
     assert result.is_at_bot is True
     assert "子南" in result.raw_mentions
     assert "鼠鼠" not in result.content
+
+
+def test_parse_ignores_bot_own_message():
+    """bot 自己的消息应该被忽略，防止自我回复无限循环。"""
+    msg = {
+        "talker": "123@chatroom",
+        "content": "🎲 人家摇出了 [3] 喵~",
+        "rawContent": "鼠鼠:\n🎲 人家摇出了 [3] 喵~",
+        "senderUsername": "鼠鼠",
+    }
+    result = parse(msg, bot_names=["鼠鼠"])
+    assert result is None

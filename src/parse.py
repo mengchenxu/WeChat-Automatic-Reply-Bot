@@ -77,6 +77,10 @@ def parse(msg, bot_names: List[str]) -> Optional[ParsedMsg]:
     for name in bot_names:
         text = re.sub(rf'@{re.escape(name)}\s*', '', text).strip()
 
+    # 过滤 bot 自己的消息（防止主动发言被回收后自我回复）
+    if sender_name in bot_names or sender in bot_names:
+        return None
+
     # 命令检测
     is_cmd = False
     cmd = cmd_args = ""
