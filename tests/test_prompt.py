@@ -109,6 +109,7 @@ def test_catgirl_prompt_identity():
     assert "孙吧" not in sp
     assert "嘴臭" not in sp
     assert "贵物" not in sp
+    assert "群内风格" in sp  # 风格适应
 
 
 def test_build_prompt_none_sender_name():

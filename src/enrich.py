@@ -27,6 +27,7 @@ class EnrichedCtx:
     related_memories: List = field(default_factory=list)
     group_summary: str = ""
     group_topic: str = ""
+    group_style: str = ""                                    # 群内风格（表情+高频词）
     history: List = field(default_factory=list)              # ChatMsg 列表
     mentionable_names: List[str] = field(default_factory=list)
 
@@ -69,12 +70,27 @@ def enrich(parsed: ParsedMsg, store: Store, bot_names: List[str] = None) -> Enri
         if name and name != parsed.sender_name:
             mentionable.append(name)
 
+    # 群内风格文本
+    style_parts = []
+    if group.top_emojis:
+        style_parts.append("常用表情: " + " ".join(group.top_emojis))
+    if group.top_words:
+        style_parts.append("高频词: " + " ".join(group.top_words[:5]))
+    # 成员风格摘要
+    member_styles = []
+    for wxid, info in people.items():
+        if info.get("style"):
+            member_styles.append(f"{info['name']}({info['style'][:30]})")
+    if member_styles:
+        style_parts.append("成员风格: " + " | ".join(member_styles[:3]))
+
     return EnrichedCtx(
         parsed=parsed,
         people=people,
         related_memories=memories,
         group_summary=group.context,
         group_topic=group.topic,
+        group_style=" | ".join(style_parts) if style_parts else "",
         history=store.get_history(parsed.room_id, limit=10),
         mentionable_names=mentionable,
     )

@@ -85,8 +85,9 @@ class Pipeline:
         if parsed is None:
             return None  # 私聊，跳过
 
-        # 记录到历史（@和非@ 都记录）
+        # 记录到历史 + 实时风格统计（@和非@ 都做）
         self._add_to_history(parsed)
+        self.store.track_style(parsed.room_id, parsed.content)
 
         # Phase 2: Enrich（非@ 在此返回）
         enriched = enrich(parsed, self.store, self.bot_names)
@@ -200,6 +201,20 @@ class Pipeline:
                         person, _ = self.store.resolve_name(name)
                         if person and person.add_fact(key, value, source="llm_extract", confidence=0.6):
                             facts_added += 1
+
+                # 提取人际关系
+                for item in items:
+                    for rel in item.get("relations", []):
+                        person_name = rel.get("person", "")
+                        target_name = rel.get("target", "")
+                        label = rel.get("label", "")
+                        if not person_name or not target_name or not label:
+                            continue
+                        p, _ = self.store.resolve_name(person_name)
+                        t, _ = self.store.resolve_name(target_name)
+                        if p and t:
+                            p.relations[t.wxid] = label
+                            t.relations[p.wxid] = label
 
                 # 定期清理低价值旧记忆
                 self.store.cleanup_old_memories(room_id)

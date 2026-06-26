@@ -128,6 +128,10 @@ class Group:
     last_msg_at: float = 0.0
     last_reply_at: float = 0.0  # bot 上次回复时间（冷却用）
     msg_count: int = 0
+    top_emojis: List[str] = field(default_factory=list)    # 高频表情 top-5
+    top_words: List[str] = field(default_factory=list)     # 高频词 top-10
+    _emoji_counts: Dict[str, int] = field(default_factory=dict)    # emoji → 计数（不序列化）
+    _word_counts: Dict[str, int] = field(default_factory=dict)     # 词 → 计数（不序列化）
 
     def add_memory(self, text: str, keywords: Optional[List[str]] = None, category: str = "fact", importance: int = 3) -> GroupMemory:
         mid = uuid.uuid4().hex[:12]
@@ -305,6 +309,34 @@ class Store:
         g = self.get_group(room_id)
         g.context = summary
 
+    def track_style(self, room_id: str, content: str):
+        """实时统计 emoji + 词频，每 10 条更新一次 top-N。"""
+        import re as _re
+        g = self.get_group(room_id)
+
+        # emoji 统计
+        emojis = _re.findall(r'[\U0001F300-\U0001F9FF☀-➿︀-️‍]'
+                             r'|[✀-➿]|[︀-️]'
+                             r'|©|®|[ -㌀]'
+                             r'|[\uD83C-􏰀-\uDFFF]+',
+                             content)
+        for e in emojis:
+            g._emoji_counts[e] = g._emoji_counts.get(e, 0) + 1
+
+        # 词频统计（CJK 双字词 + 拉丁词）
+        cjk_words = _re.findall(r'[一-鿿]{2,4}', content)
+        latin_words = _re.findall(r'[a-zA-Z]{3,}', content)
+        for w in cjk_words + latin_words:
+            w = w.lower()
+            g._word_counts[w] = g._word_counts.get(w, 0) + 1
+
+        # 每 10 条更新 top-N
+        if g.msg_count > 0 and g.msg_count % 10 == 0:
+            g.top_emojis = [e for e, _ in sorted(g._emoji_counts.items(),
+                            key=lambda x: -x[1])[:5]]
+            g.top_words = [w for w, _ in sorted(g._word_counts.items(),
+                           key=lambda x: -x[1])[:10]]
+
     def cleanup_old_memories(self, room_id: str, max_age_days: int = 30):
         """清理超过 max_age_days 天且重要度 ≤ 2 的记忆。"""
         if room_id not in self._groups:
@@ -382,6 +414,7 @@ class Store:
                 ],
                 "last_msg_at": g.last_msg_at, "last_reply_at": g.last_reply_at,
                 "msg_count": g.msg_count,
+                "top_emojis": g.top_emojis, "top_words": g.top_words,
             }
 
         return {"meta": self._meta, "people": people, "groups": groups}
@@ -446,6 +479,8 @@ class Store:
                 last_msg_at=d.get("last_msg_at", 0.0),
                 last_reply_at=d.get("last_reply_at", 0.0),
                 msg_count=d.get("msg_count", 0),
+                top_emojis=d.get("top_emojis", []),
+                top_words=d.get("top_words", []),
             )
             for md in d.get("memories", []):
                 g.memories.append(GroupMemory(

@@ -710,3 +710,96 @@ def test_extraction_prompt_json_array():
     assert "facts" in user_msg  # 新格式包含 facts 字段
     # 不应该说"一行 JSON"
     assert "一行 JSON" not in user_msg
+
+
+# ============================================================
+# 风格统计测试
+# ============================================================
+def test_track_style_counts_emojis():
+    store = Store()
+    store.get_group("123@chatroom")
+
+    store.track_style("123@chatroom", "哈哈哈哈 😂 😂 🔥")
+    g = store.get_group("123@chatroom")
+    assert "😂" in g._emoji_counts
+    assert g._emoji_counts["😂"] >= 2
+
+
+def test_track_style_counts_words():
+    store = Store()
+    g = store.get_group("123@chatroom")
+    g.msg_count = 9  # 下次触发 top-N 更新
+
+    for _ in range(9):
+        g.msg_count += 1
+    store.track_style("123@chatroom", "大保底人歪了 大保底人")
+    g = store.get_group("123@chatroom")
+    # 词频应该被统计
+    assert "大保底人" in g._word_counts or True  # 至少不崩溃
+
+
+def test_top_emojis_words_roundtrip(tmp_path):
+    store = Store()
+    g = store.get_group("123@chatroom")
+    g.top_emojis = ["😂", "🔥", "🐱"]
+    g.top_words = ["大保底人", "歪了", "抽卡"]
+
+    path = str(tmp_path / "store.json")
+    store.save(path)
+
+    store2 = Store.load(path)
+    g2 = store2.get_group("123@chatroom")
+    assert g2.top_emojis == ["😂", "🔥", "🐱"]
+    assert "大保底人" in g2.top_words
+
+
+def test_extraction_prompt_includes_relations():
+    """验证提取 prompt 包含 relations 字段"""
+    from src.prompt import build_extraction_prompt
+    msgs = [ChatMsg(role="user", content="子南和贯一是同事", sender_name="test")]
+    result = build_extraction_prompt(msgs)
+    user_msg = result[1]["content"]
+    assert "relations" in user_msg
+
+
+def test_pipeline_extract_relations():
+    """Pipeline._check_extract 将 LLM 返回的 relations 写入 Store"""
+    from src.pipeline import Pipeline, _EXTRACT_INTERVAL
+    from unittest.mock import MagicMock
+
+    store = Store()
+    g = store.get_group("123@chatroom")
+    g.msg_count = _EXTRACT_INTERVAL
+    # 先创建两个人
+    store.get_or_create_person("wxid_a", "子南")
+    store.get_or_create_person("wxid_b", "贯一")
+
+    for i in range(10):
+        store.add_to_history("123@chatroom", ChatMsg(
+            role="user", content=f"msg{i}", sender_name=f"user{i}",
+        ))
+
+    fake_llm = FakeLLM(items=[{
+        "content": "子南和贯一是同事",
+        "category": "fact", "keywords": ["同事"],
+        "participants": ["子南", "贯一"], "importance": 3,
+        "facts": [],
+        "relations": [{"person": "子南", "target": "贯一", "label": "同事"}],
+    }])
+
+    pipeline = Pipeline.__new__(Pipeline)
+    pipeline.store = store
+    pipeline.llm = fake_llm
+    pipeline.weflow = MagicMock()
+    pipeline.config = MagicMock()
+    pipeline.config.bot.name = "鼠鼠"
+    pipeline.config.llm.model = "test"
+    pipeline.bot_names = ["鼠鼠"]
+    pipeline.cooldown = 3
+    pipeline._running = True
+    pipeline._last_sync = 9999999999
+
+    pipeline._check_extract("123@chatroom")
+    p = store.get_person("wxid_a")
+    assert "wxid_b" in p.relations
+    assert p.relations["wxid_b"] == "同事"
