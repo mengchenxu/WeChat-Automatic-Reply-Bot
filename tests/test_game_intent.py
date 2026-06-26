@@ -276,7 +276,8 @@ class TestPipelineIntegration:
 
 
 def test_dice_returns_1_to_6():
-    """Pipeline._handle_dice 返回 1-6 的结果。"""
+    """Pipeline._handle_dice 返回 1-6 的结果。使用 mock send 不操作微信窗口。"""
+    from unittest.mock import patch
     from src.pipeline import Pipeline
     from unittest.mock import MagicMock
 
@@ -296,18 +297,16 @@ def test_dice_returns_1_to_6():
         is_command=True, command="/骰子",
     )
 
-    # 跑 20 次确保随机分布
-    results = set()
-    for _ in range(20):
-        reply = pipeline._handle_dice(parsed)
-        # 格式正确
-        assert "🎲" in reply
-        assert "喵~" in reply
-        # 提取数字
-        import re
-        match = re.search(r'\[(\d)\]', reply)
-        assert match
-        results.add(int(match.group(1)))
+    # Mock send 避免操作真实微信窗口
+    with patch("src.pipeline.send", return_value=True):
+        results = set()
+        for _ in range(20):
+            reply = pipeline._handle_dice(parsed)
+            assert "🎲" in reply
+            assert "喵~" in reply
+            import re
+            match = re.search(r'\[(\d)\]', reply)
+            assert match
+            results.add(int(match.group(1)))
 
-    # 应该覆盖所有 6 面
     assert results == {1, 2, 3, 4, 5, 6}
